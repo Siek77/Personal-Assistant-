@@ -218,18 +218,23 @@ export default function SpotifyTab() {
   }
 
   if (!token) {
+    const redirectUri = getRedirectUri()
+    const clientId = settings.spotifyClientId || ''
+    const maskedId = clientId.length > 8
+      ? clientId.slice(0, 4) + '••••' + clientId.slice(-4)
+      : clientId ? '(too short — check it)' : '(not set)'
+
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - var(--header) - 40px)', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - var(--header) - 40px)', gap: 16, padding: 20 }}>
         <div style={{ fontSize: 60 }}>🎵</div>
         <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--spotify)' }}>Connect Spotify</h2>
-        <p style={{ color: 'var(--text2)', fontSize: 14, textAlign: 'center', maxWidth: 360 }}>
-          Connect your Spotify account to control playback, browse playlists, and see your top tracks.
-        </p>
+
         {error && (
-          <div style={{ padding: '10px 16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, fontSize: 13, color: 'var(--red)', maxWidth: 360, textAlign: 'center' }}>
+          <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, fontSize: 13, color: 'var(--red)', maxWidth: 420, textAlign: 'center', lineHeight: 1.6 }}>
             ⚠️ {error}
           </div>
         )}
+
         <button
           className="btn"
           style={{ background: 'var(--spotify)', color: 'white', padding: '12px 28px', fontSize: 15, fontWeight: 600 }}
@@ -237,12 +242,57 @@ export default function SpotifyTab() {
         >
           Connect with Spotify
         </button>
-        <div style={{ fontSize: 11, color: 'var(--text2)', maxWidth: 380, textAlign: 'center', lineHeight: 1.7 }}>
-          <strong style={{ color: 'var(--text3)' }}>Setup:</strong> In Spotify Developer Dashboard → your app → Settings →
-          add this exact Redirect URI:<br />
-          <code style={{ fontSize: 10, background: 'var(--bg3)', padding: '3px 6px', borderRadius: 4, wordBreak: 'break-all' }}>
-            {getRedirectUri()}
-          </code>
+
+        {/* Debug checklist */}
+        <div style={{ width: '100%', maxWidth: 460, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>
+            Checklist — fix "invalid_client"
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Step 1 */}
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
+                1. Your Client ID (from Settings)
+              </div>
+              <code style={{ fontSize: 12, color: clientId ? 'var(--green)' : 'var(--red)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>
+                {maskedId}
+              </code>
+              {!clientId && (
+                <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>
+                  → Go to Settings → Spotify and paste your Client ID
+                </div>
+              )}
+            </div>
+
+            {/* Step 2 */}
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
+                2. Add this exact Redirect URI in your Spotify app
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <code style={{ fontSize: 11, color: 'var(--cyan)', background: 'var(--bg2)', padding: '4px 8px', borderRadius: 4, flex: 1, wordBreak: 'break-all', lineHeight: 1.5 }}>
+                  {redirectUri}
+                </code>
+                <button className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard.writeText(redirectUri)}>
+                  Copy
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 6, lineHeight: 1.5 }}>
+                In Spotify Dashboard → your app → <strong>Edit Settings</strong> → Redirect URIs → paste above → Save
+              </div>
+            </div>
+
+            {/* Step 3 */}
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
+                3. App type must be set correctly
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.5 }}>
+                In Spotify Dashboard → your app → <strong>Edit Settings</strong> → check that <strong>Web API</strong> is enabled (not just Web Playback SDK)
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     )
