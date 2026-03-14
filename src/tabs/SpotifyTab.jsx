@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSettings } from '../context/SettingsContext'
 
 const SCOPES = [
@@ -10,287 +10,371 @@ const SCOPES = [
   'streaming',
 ].join(' ')
 
-// PKCE helpers
 async function generateCodeVerifier() {
-  const array = new Uint8Array(64)
-  crypto.getRandomValues(array)
-  return btoa(String.fromCharCode(...array))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+  const arr = new Uint8Array(64)
+  crypto.getRandomValues(arr)
+  return btoa(String.fromCharCode(...arr)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'')
 }
-
-async function generateCodeChallenge(verifier) {
-  const data = new TextEncoder().encode(verifier)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+async function generateCodeChallenge(v) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v))
+  return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'')
 }
-
-function msToTime(ms) {
+function fmt(ms) {
+  if (!ms) return '0:00'
   const s = Math.floor(ms / 1000)
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`
 }
-
 function getRedirectUri() {
   return window.location.origin + window.location.pathname
 }
 
+const DEVICE_ICON = { Computer:'💻', Smartphone:'📱', Speaker:'🔊', TV:'📺', GameConsole:'🎮', Automobile:'🚗' }
+
+// ── Device Picker ──────────────────────────────────────────────────────────────
+function DevicePicker({ devices, activeId, onSelect, onRefresh, loading }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const active = devices.find(d => d.id === activeId)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={() => { setOpen(o => !o); if (!open) onRefresh() }}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.07)',
+          border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: '6px 14px 6px 10px',
+          cursor: 'pointer', color: active ? '#1db954' : '#94a3b8', fontSize: 12, fontWeight: 500,
+          transition: 'all 0.15s', whiteSpace: 'nowrap',
+        }}
+      >
+        <span>{DEVICE_ICON[active?.type] ?? '🔊'}</span>
+        <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {active?.name ?? 'Select device'}
+        </span>
+        <span style={{ opacity: 0.5, fontSize: 9 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', bottom: 'calc(100% + 8px)', left: 0,
+          background: '#161b27', border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 14, padding: 8, minWidth: 260, zIndex: 100,
+          boxShadow: '0 16px 48px rgba(0,0,0,0.6)',
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#475569', letterSpacing: 1.5, textTransform: 'uppercase', padding: '4px 10px 8px' }}>
+            Available Devices
+          </div>
+
+          {loading && <div style={{ padding: '8px 10px', fontSize: 12, color: '#64748b' }}>Scanning…</div>}
+
+          {!loading && devices.length === 0 && (
+            <div style={{ padding: '8px 10px', fontSize: 12, color: '#64748b', lineHeight: 1.6 }}>
+              No devices found.<br/>Open Spotify on any device first.
+            </div>
+          )}
+
+          {devices.map(d => {
+            const isActive = d.id === activeId
+            return (
+              <button
+                key={d.id}
+                onClick={() => { onSelect(d.id); setOpen(false) }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                  padding: '9px 10px', borderRadius: 8, background: isActive ? 'rgba(29,185,84,0.12)' : 'transparent',
+                  border: 'none', cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
+                }}
+                onMouseOver={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
+                onMouseOut={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+              >
+                <span style={{ fontSize: 20, flexShrink: 0 }}>{DEVICE_ICON[d.type] ?? '🎵'}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: isActive ? '#1db954' : '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {d.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
+                    {d.type}{d.volume_percent != null ? ` · ${d.volume_percent}%` : ''}
+                  </div>
+                </div>
+                {isActive && <span style={{ fontSize: 10, color: '#1db954', fontWeight: 700, flexShrink: 0 }}>ACTIVE</span>}
+              </button>
+            )
+          })}
+
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: 6, paddingTop: 6 }}>
+            <button onClick={onRefresh} style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '6px 10px', borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, color: '#64748b' }}>
+              ⟳ Refresh devices
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Seek Bar ───────────────────────────────────────────────────────────────────
+function SeekBar({ position, duration, onSeek }) {
+  const ref = useRef(null)
+  const [hover, setHover] = useState(false)
+  const pct = duration ? Math.min(100, (position / duration) * 100) : 0
+
+  const seek = (e) => {
+    if (!ref.current || !duration) return
+    const rect = ref.current.getBoundingClientRect()
+    onSeek(Math.floor(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * duration))
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ fontSize: 11, color: '#475569', width: 32, textAlign: 'right', flexShrink: 0 }}>{fmt(position)}</span>
+      <div
+        ref={ref} onClick={seek}
+        onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+        style={{ flex: 1, height: hover ? 6 : 4, background: 'rgba(255,255,255,0.1)', borderRadius: 3, cursor: 'pointer', transition: 'height 0.15s', position: 'relative' }}
+      >
+        <div style={{ height: '100%', width: `${pct}%`, background: hover ? '#fff' : '#1db954', borderRadius: 3, transition: 'background 0.15s', position: 'relative' }}>
+          {hover && <div style={{ position: 'absolute', right: -6, top: '50%', transform: 'translateY(-50%)', width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />}
+        </div>
+      </div>
+      <span style={{ fontSize: 11, color: '#475569', width: 32, flexShrink: 0 }}>{fmt(duration)}</span>
+    </div>
+  )
+}
+
+// ── Track Row ──────────────────────────────────────────────────────────────────
+function TrackRow({ track, index, active, playing, onClick }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '6px 12px',
+        borderRadius: 8, cursor: 'pointer',
+        background: active ? 'rgba(29,185,84,0.08)' : hovered ? 'rgba(255,255,255,0.04)' : 'transparent',
+        transition: 'background 0.1s',
+      }}
+    >
+      <div style={{ width: 18, textAlign: 'center', fontSize: 12, color: active ? '#1db954' : '#475569', flexShrink: 0 }}>
+        {active && playing ? <span style={{ color: '#1db954' }}>♫</span> : index + 1}
+      </div>
+      <div style={{ width: 38, height: 38, borderRadius: 5, overflow: 'hidden', flexShrink: 0, background: '#1e2533' }}>
+        {track.album?.images?.[2]?.url && <img src={track.album.images[2].url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: active ? '#1db954' : '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</div>
+        <div style={{ fontSize: 11, color: '#64748b', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.artists?.map(a => a.name).join(', ')}</div>
+      </div>
+      <div style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace', flexShrink: 0 }}>{fmt(track.duration_ms)}</div>
+    </div>
+  )
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────────
 export default function SpotifyTab() {
   const { settings } = useSettings()
   const [token, setToken] = useState(() => {
     const t = localStorage.getItem('spotify_token')
     const exp = localStorage.getItem('spotify_token_exp')
-    if (t && exp && Date.now() < Number(exp)) return t
-    return null
+    return t && exp && Date.now() < Number(exp) ? t : null
   })
+  const tokenRef = useRef(token)
+  tokenRef.current = token
+
+  const [player, setPlayer] = useState(null)
+  const [devices, setDevices] = useState([])
+  const [devLoading, setDevLoading] = useState(false)
   const [topTracks, setTopTracks] = useState([])
   const [playlists, setPlaylists] = useState([])
-  const [player, setPlayer] = useState(null)
-  const [activeView, setActiveView] = useState('player')
+  const [view, setView] = useState('top')
+  const [shuffle, setShuffle] = useState(false)
+  const [repeat, setRepeat] = useState('off')
+  const [volume, setVolume] = useState(50)
+  const [localPos, setLocalPos] = useState(0)
   const [error, setError] = useState(null)
   const [exchanging, setExchanging] = useState(false)
   const pollRef = useRef(null)
+  const tickRef = useRef(null)
 
-  // Handle redirect back from Spotify with ?code=...
+  // ── Auth ──────────────────────────────────────────────────
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const code = params.get('code')
+    const p = new URLSearchParams(window.location.search)
+    const code = p.get('code')
     const verifier = localStorage.getItem('spotify_code_verifier')
-
-    if (code && verifier && !exchanging) {
-      setExchanging(true)
-      exchangeCode(code, verifier)
-    }
+    if (code && verifier) { setExchanging(true); exchangeCode(code, verifier) }
   }, [])
 
   const exchangeCode = async (code, verifier) => {
     try {
       const res = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: getRedirectUri(),
-          client_id: settings.spotifyClientId,
-          code_verifier: verifier,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: getRedirectUri(), client_id: settings.spotifyClientId, code_verifier: verifier }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error_description || data.error || 'Token exchange failed')
-
-      localStorage.setItem('spotify_token', data.access_token)
-      localStorage.setItem('spotify_token_exp', String(Date.now() + data.expires_in * 1000))
-      if (data.refresh_token) localStorage.setItem('spotify_refresh_token', data.refresh_token)
+      if (!res.ok) throw new Error(data.error_description || data.error)
+      storeToken(data)
       localStorage.removeItem('spotify_code_verifier')
-
       setToken(data.access_token)
-      // Clean URL
       window.history.replaceState({}, '', window.location.pathname)
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setExchanging(false)
-    }
+    } catch (e) { setError(e.message) }
+    finally { setExchanging(false) }
   }
 
-  const refreshToken = async () => {
+  const storeToken = (data) => {
+    localStorage.setItem('spotify_token', data.access_token)
+    localStorage.setItem('spotify_token_exp', String(Date.now() + data.expires_in * 1000))
+    if (data.refresh_token) localStorage.setItem('spotify_refresh_token', data.refresh_token)
+    tokenRef.current = data.access_token
+  }
+
+  const doRefresh = async () => {
     const rt = localStorage.getItem('spotify_refresh_token')
-    if (!rt || !settings.spotifyClientId) return null
+    if (!rt) return null
     try {
       const res = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: rt,
-          client_id: settings.spotifyClientId,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: settings.spotifyClientId }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error('Refresh failed')
-      localStorage.setItem('spotify_token', data.access_token)
-      localStorage.setItem('spotify_token_exp', String(Date.now() + data.expires_in * 1000))
-      if (data.refresh_token) localStorage.setItem('spotify_refresh_token', data.refresh_token)
-      setToken(data.access_token)
-      return data.access_token
-    } catch {
-      return null
-    }
+      if (!res.ok) throw new Error()
+      storeToken(data); setToken(data.access_token); return data.access_token
+    } catch { return null }
   }
 
   const authorize = async () => {
-    if (!settings.spotifyClientId) {
-      setError('Add your Spotify Client ID in Settings first.')
-      return
-    }
+    if (!settings.spotifyClientId) { setError('Add Spotify Client ID in Settings first.'); return }
     const verifier = await generateCodeVerifier()
-    const challenge = await generateCodeChallenge(verifier)
     localStorage.setItem('spotify_code_verifier', verifier)
-
     const params = new URLSearchParams({
-      client_id: settings.spotifyClientId,
-      response_type: 'code',
-      redirect_uri: getRedirectUri(),
-      scope: SCOPES,
-      code_challenge_method: 'S256',
-      code_challenge: challenge,
+      client_id: settings.spotifyClientId, response_type: 'code',
+      redirect_uri: getRedirectUri(), scope: SCOPES,
+      code_challenge_method: 'S256', code_challenge: await generateCodeChallenge(verifier),
     })
     window.location.href = `https://accounts.spotify.com/authorize?${params}`
   }
 
-  const api = async (endpoint, method = 'GET', body = null, currentToken = token) => {
+  // ── API ───────────────────────────────────────────────────
+  const api = useCallback(async (endpoint, method = 'GET', body = null, tok = null) => {
+    const t = tok || tokenRef.current
     const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${currentToken}`,
-        'Content-Type': 'application/json',
-      },
+      method, headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
     })
     if (res.status === 401) {
-      const newToken = await refreshToken()
-      if (newToken) return api(endpoint, method, body, newToken)
-      setToken(null)
-      localStorage.removeItem('spotify_token')
-      return null
+      const newTok = await doRefresh()
+      if (newTok) return api(endpoint, method, body, newTok)
+      setToken(null); return null
     }
     if (res.status === 204 || res.status === 202) return null
     if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || res.statusText) }
     return res.json()
-  }
+  }, [])
 
-  const fetchPlayer = async () => {
-    try { const d = await api('/me/player'); if (d) setPlayer(d) } catch {}
-  }
-  const fetchTopTracks = async () => {
-    try { const d = await api('/me/top/tracks?limit=20&time_range=short_term'); if (d) setTopTracks(d.items) } catch {}
-  }
-  const fetchPlaylists = async () => {
-    try { const d = await api('/me/playlists?limit=20'); if (d) setPlaylists(d.items) } catch {}
+  // ── Fetchers ──────────────────────────────────────────────
+  const fetchPlayer = useCallback(async () => {
+    try {
+      const d = await api('/me/player')
+      if (d) { setPlayer(d); setShuffle(d.shuffle_state); setRepeat(d.repeat_state); setVolume(d.device?.volume_percent ?? 50); setLocalPos(d.progress_ms || 0) }
+    } catch {}
+  }, [api])
+
+  const fetchDevices = async () => {
+    setDevLoading(true)
+    try { const d = await api('/me/player/devices'); if (d) setDevices(d.devices) } catch {}
+    setDevLoading(false)
   }
 
   useEffect(() => {
     if (!token) return
-    fetchPlayer(); fetchTopTracks(); fetchPlaylists()
+    fetchPlayer(); fetchDevices()
+    api('/me/top/tracks?limit=30&time_range=short_term').then(d => d && setTopTracks(d.items)).catch(() => {})
+    api('/me/playlists?limit=24').then(d => d && setPlaylists(d.items)).catch(() => {})
     pollRef.current = setInterval(fetchPlayer, 5000)
     return () => clearInterval(pollRef.current)
   }, [token])
 
+  // Local progress tick
+  useEffect(() => {
+    clearInterval(tickRef.current)
+    if (player?.is_playing) tickRef.current = setInterval(() => setLocalPos(p => p + 1000), 1000)
+    return () => clearInterval(tickRef.current)
+  }, [player?.is_playing, player?.item?.id])
+
+  // ── Controls ──────────────────────────────────────────────
   const control = async (action) => {
     try {
-      switch (action) {
-        case 'play': await api('/me/player/play', 'PUT'); break
-        case 'pause': await api('/me/player/pause', 'PUT'); break
-        case 'next': await api('/me/player/next', 'POST'); break
-        case 'prev': await api('/me/player/previous', 'POST'); break
-      }
+      if (action === 'play') await api('/me/player/play', 'PUT')
+      else if (action === 'pause') await api('/me/player/pause', 'PUT')
+      else if (action === 'next') await api('/me/player/next', 'POST')
+      else if (action === 'prev') await api('/me/player/previous', 'POST')
       setTimeout(fetchPlayer, 500)
     } catch (e) { setError(e.message) }
   }
 
-  const playTrack = async (uri) => {
-    try { await api('/me/player/play', 'PUT', { uris: [uri] }); setTimeout(fetchPlayer, 600) }
+  const seek = async (ms) => { setLocalPos(ms); try { await api(`/me/player/seek?position_ms=${ms}`, 'PUT') } catch {} }
+  const setVol = async (v) => { setVolume(v); try { await api(`/me/player/volume?volume_percent=${v}`, 'PUT') } catch {} }
+  const toggleShuffle = async () => { const n = !shuffle; setShuffle(n); try { await api(`/me/player/shuffle?state=${n}`, 'PUT') } catch {} }
+  const cycleRepeat = async () => {
+    const n = repeat === 'off' ? 'context' : repeat === 'context' ? 'track' : 'off'
+    setRepeat(n); try { await api(`/me/player/repeat?state=${n}`, 'PUT') } catch {}
+  }
+  const transferDevice = async (id) => {
+    try { await api('/me/player', 'PUT', { device_ids: [id], play: true }); setTimeout(fetchPlayer, 800) }
     catch (e) { setError(e.message) }
   }
-
-  const setVolume = async (v) => {
-    try { await api(`/me/player/volume?volume_percent=${v}`, 'PUT') } catch {}
+  const playUri = async (uri) => {
+    const body = uri.startsWith('spotify:track:') ? { uris: [uri] } : { context_uri: uri }
+    try { await api('/me/player/play', 'PUT', body); setTimeout(fetchPlayer, 600) }
+    catch (e) { setError(e.message) }
   }
-
   const disconnect = () => {
-    setToken(null)
-    ;['spotify_token', 'spotify_token_exp', 'spotify_refresh_token', 'spotify_code_verifier']
-      .forEach(k => localStorage.removeItem(k))
+    setToken(null); clearInterval(pollRef.current); clearInterval(tickRef.current)
+    ;['spotify_token','spotify_token_exp','spotify_refresh_token','spotify_code_verifier'].forEach(k => localStorage.removeItem(k))
   }
 
-  const isPlaying = player?.is_playing
   const track = player?.item
-  const progress = track ? (player.progress_ms / track.duration_ms) * 100 : 0
+  const playing = player?.is_playing
+  const albumImg = track?.album?.images?.[0]?.url
+  const repeatIcon = { off: '↩', context: '🔁', track: '🔂' }
 
-  // Loading state while exchanging code
-  if (exchanging) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - var(--header) - 40px)', gap: 12 }}>
-        <div style={{ fontSize: 40 }}>🎵</div>
-        <div style={{ color: 'var(--text2)', fontSize: 14 }}>Connecting to Spotify...</div>
-      </div>
-    )
-  }
+  // ── Auth Screens ──────────────────────────────────────────
+  if (exchanging) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, flexDirection: 'column' }}>
+      <div style={{ fontSize: 40 }}>🎵</div>
+      <div style={{ color: '#94a3b8', fontSize: 14 }}>Connecting to Spotify…</div>
+    </div>
+  )
 
   if (!token) {
-    const redirectUri = getRedirectUri()
-    const clientId = settings.spotifyClientId || ''
-    const maskedId = clientId.length > 8
-      ? clientId.slice(0, 4) + '••••' + clientId.slice(-4)
-      : clientId ? '(too short — check it)' : '(not set)'
-
+    const uri = getRedirectUri()
+    const cid = settings.spotifyClientId || ''
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - var(--header) - 40px)', gap: 16, padding: 20 }}>
-        <div style={{ fontSize: 60 }}>🎵</div>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--spotify)' }}>Connect Spotify</h2>
-
-        {error && (
-          <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, fontSize: 13, color: 'var(--red)', maxWidth: 420, textAlign: 'center', lineHeight: 1.6 }}>
-            ⚠️ {error}
-          </div>
-        )}
-
-        <button
-          className="btn"
-          style={{ background: 'var(--spotify)', color: 'white', padding: '12px 28px', fontSize: 15, fontWeight: 600 }}
-          onClick={authorize}
-        >
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 20, padding: 24 }}>
+        <div style={{ fontSize: 56 }}>🎵</div>
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1db954', margin: 0 }}>Connect Spotify</h2>
+        {error && <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 16px', fontSize: 13, color: '#ef4444', maxWidth: 420, textAlign: 'center' }}>⚠️ {error}</div>}
+        <button onClick={authorize} style={{ background: '#1db954', color: '#000', border: 'none', borderRadius: 24, padding: '13px 36px', fontSize: 15, fontWeight: 700, cursor: 'pointer', letterSpacing: 0.3, boxShadow: '0 0 24px rgba(29,185,84,0.35)' }}>
           Connect with Spotify
         </button>
-
-        {/* Debug checklist */}
-        <div style={{ width: '100%', maxWidth: 460, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>
-            Checklist — fix "invalid_client"
+        <div style={{ width: '100%', maxWidth: 460, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: 1.5, textTransform: 'uppercase' }}>Setup checklist</div>
+          <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Client ID</div>
+            <code style={{ fontSize: 12, color: cid ? '#1db954' : '#ef4444' }}>
+              {cid.length > 8 ? cid.slice(0,4)+'••••'+cid.slice(-4) : cid || '(not set — go to Settings)'}
+            </code>
           </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* Step 1 */}
-            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
-                1. Your Client ID (from Settings)
-              </div>
-              <code style={{ fontSize: 12, color: clientId ? 'var(--green)' : 'var(--red)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>
-                {maskedId}
-              </code>
-              {!clientId && (
-                <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>
-                  → Go to Settings → Spotify and paste your Client ID
-                </div>
-              )}
-            </div>
-
-            {/* Step 2 */}
-            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
-                2. Add this exact Redirect URI in your Spotify app
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <code style={{ fontSize: 11, color: 'var(--cyan)', background: 'var(--bg2)', padding: '4px 8px', borderRadius: 4, flex: 1, wordBreak: 'break-all', lineHeight: 1.5 }}>
-                  {redirectUri}
-                </code>
-                <button className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard.writeText(redirectUri)}>
-                  Copy
-                </button>
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 6, lineHeight: 1.5 }}>
-                In Spotify Dashboard → your app → <strong>Edit Settings</strong> → Redirect URIs → paste above → Save
-              </div>
-            </div>
-
-            {/* Step 3 */}
-            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
-                3. App type must be set correctly
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.5 }}>
-                In Spotify Dashboard → your app → <strong>Edit Settings</strong> → check that <strong>Web API</strong> is enabled (not just Web Playback SDK)
-              </div>
+          <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Redirect URI — add this in Spotify Dashboard</div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <code style={{ fontSize: 11, color: '#06b6d4', wordBreak: 'break-all', lineHeight: 1.5, flex: 1 }}>{uri}</code>
+              <button className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard.writeText(uri)}>Copy</button>
             </div>
           </div>
         </div>
@@ -298,134 +382,152 @@ export default function SpotifyTab() {
     )
   }
 
+  // ── Player UI ─────────────────────────────────────────────
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 16, height: 'calc(100vh - var(--header) - 40px)', overflow: 'hidden' }}>
-      {/* Player */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto' }}>
-        <div className="spotify-player">
-          <div className="album-art">
-            {track?.album?.images?.[0]?.url
-              ? <img src={track.album.images[0].url} alt="album" />
-              : <span>🎵</span>}
+    <div style={{ display: 'grid', gridTemplateColumns: '290px 1fr', height: 'calc(100vh - var(--header) - 40px)', overflow: 'hidden', borderRadius: 16, border: '1px solid rgba(255,255,255,0.06)', background: '#0a0e17' }}>
+
+      {/* ── LEFT PANEL ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+        {/* Dynamic blurred background from album art */}
+        {albumImg && (
+          <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${albumImg})`, backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(60px) saturate(1.8)', opacity: 0.25, transform: 'scale(1.2)' }} />
+        )}
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(10,14,23,0.4) 0%, rgba(10,14,23,0.95) 60%, #0a0e17 100%)' }} />
+
+        {/* Content */}
+        <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', padding: '20px 20px 0', gap: 16, overflow: 'hidden' }}>
+
+          {/* Album art */}
+          <div style={{ width: '100%', aspectRatio: '1', borderRadius: 14, overflow: 'hidden', flexShrink: 0, background: '#1a2030', boxShadow: '0 24px 60px rgba(0,0,0,0.7)' }}>
+            {albumImg
+              ? <img src={albumImg} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} alt="album" />
+              : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 52, color: '#1db954' }}>🎵</div>
+            }
           </div>
-          <div className="track-name">{track?.name || 'Nothing Playing'}</div>
-          <div className="track-artist">{track?.artists?.map(a => a.name).join(', ') || '—'}</div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text2)', marginTop: -6 }}>
-            <span>{msToTime(player?.progress_ms || 0)}</span>
-            <span>{msToTime(track?.duration_ms || 0)}</span>
-          </div>
-          <div className="player-controls">
-            <button className="ctrl-btn" onClick={() => control('prev')}>⏮</button>
-            <button className="ctrl-btn play" onClick={() => control(isPlaying ? 'pause' : 'play')}>
-              {isPlaying ? '⏸' : '▶'}
-            </button>
-            <button className="ctrl-btn" onClick={() => control('next')}>⏭</button>
-          </div>
-          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: 'var(--text2)' }}>🔊</span>
-            <input type="range" min={0} max={100}
-              defaultValue={player?.device?.volume_percent || 50}
-              style={{ flex: 1, accentColor: 'var(--spotify)' }}
-              onChange={e => setVolume(e.target.value)} />
-          </div>
-          {player?.device && (
-            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text2)' }}>
-              Playing on: <span style={{ color: 'var(--spotify)' }}>{player.device.name}</span>
+
+          {/* Track info */}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {track?.name || 'Nothing playing'}
             </div>
-          )}
+            <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {track?.artists?.map(a => a.name).join(', ') || '—'}
+            </div>
+            {track?.album?.name && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {track.album.name} · {track.album.release_date?.split('-')[0]}
+              </div>
+            )}
+          </div>
+
+          {/* Seek bar */}
+          <SeekBar position={localPos} duration={track?.duration_ms} onSeek={seek} />
+
+          {/* Shuffle + Repeat */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 28 }}>
+            {[
+              { icon: '🔀', active: shuffle, onClick: toggleShuffle, tip: 'Shuffle' },
+              { icon: repeatIcon[repeat], active: repeat !== 'off', onClick: cycleRepeat, tip: 'Repeat' },
+            ].map(b => (
+              <button key={b.tip} onClick={b.onClick} title={b.tip} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 17, opacity: b.active ? 1 : 0.3, transition: 'opacity 0.2s', position: 'relative', padding: 4 }}>
+                {b.icon}
+                {b.active && <div style={{ position: 'absolute', bottom: -2, left: '50%', transform: 'translateX(-50%)', width: 4, height: 4, borderRadius: '50%', background: '#1db954' }} />}
+              </button>
+            ))}
+          </div>
+
+          {/* Prev / Play / Next */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24 }}>
+            <button onClick={() => control('prev')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 24, color: '#cbd5e1', opacity: 0.75, transition: 'opacity 0.1s', padding: 4 }}
+              onMouseOver={e => e.currentTarget.style.opacity = 1} onMouseOut={e => e.currentTarget.style.opacity = 0.75}>⏮</button>
+
+            <button onClick={() => control(playing ? 'pause' : 'play')} style={{
+              width: 56, height: 56, borderRadius: '50%', background: '#1db954', border: 'none', cursor: 'pointer',
+              fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', fontWeight: 900,
+              boxShadow: '0 0 24px rgba(29,185,84,0.45)', transition: 'transform 0.12s, box-shadow 0.12s',
+            }}
+              onMouseOver={e => { e.currentTarget.style.transform = 'scale(1.07)'; e.currentTarget.style.boxShadow = '0 0 36px rgba(29,185,84,0.65)' }}
+              onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 0 24px rgba(29,185,84,0.45)' }}>
+              {playing ? '⏸' : '▶'}
+            </button>
+
+            <button onClick={() => control('next')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 24, color: '#cbd5e1', opacity: 0.75, transition: 'opacity 0.1s', padding: 4 }}
+              onMouseOver={e => e.currentTarget.style.opacity = 1} onMouseOut={e => e.currentTarget.style.opacity = 0.75}>⏭</button>
+          </div>
+
+          {/* Volume */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, opacity: 0.4 }}>🔈</span>
+            <input type="range" min={0} max={100} value={volume} onChange={e => setVol(Number(e.target.value))}
+              style={{ flex: 1, accentColor: '#1db954', cursor: 'pointer' }} />
+            <span style={{ fontSize: 13, opacity: 0.4 }}>🔊</span>
+          </div>
+
+          {/* Device picker */}
+          <div style={{ paddingBottom: 4 }}>
+            <DevicePicker devices={devices} activeId={player?.device?.id} onSelect={transferDevice} onRefresh={fetchDevices} loading={devLoading} />
+          </div>
         </div>
 
-        <button className="btn btn-danger btn-sm" style={{ width: '100%' }} onClick={disconnect}>
-          Disconnect Spotify
-        </button>
-
-        {error && (
-          <div style={{ padding: 10, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, fontSize: 12, color: 'var(--red)' }}>
-            ⚠️ {error}
-          </div>
-        )}
+        {/* Disconnect */}
+        <div style={{ position: 'relative', padding: '10px 20px 16px' }}>
+          {error && (
+            <div onClick={() => setError(null)} style={{ fontSize: 11, color: '#ef4444', marginBottom: 8, cursor: 'pointer', background: 'rgba(239,68,68,0.08)', borderRadius: 6, padding: '4px 8px' }}>
+              ⚠️ {error} — tap to dismiss
+            </div>
+          )}
+          <button onClick={disconnect} style={{ width: '100%', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '7px 0', cursor: 'pointer', fontSize: 12, color: '#ef4444', fontWeight: 500, transition: 'background 0.15s' }}
+            onMouseOver={e => e.currentTarget.style.background = 'rgba(239,68,68,0.16)'}
+            onMouseOut={e => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'}>
+            Disconnect Spotify
+          </button>
+        </div>
       </div>
 
-      {/* Right Panel */}
-      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-          {[['player', '🎵 Now Playing'], ['top', '⭐ Top Tracks'], ['playlists', '📋 Playlists']].map(([v, l]) => (
-            <button key={v} className={`btn btn-sm ${activeView === v ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setActiveView(v)}>{l}</button>
+      {/* ── RIGHT PANEL ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0c1018' }}>
+
+        {/* Tab bar */}
+        <div style={{ display: 'flex', padding: '0 16px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+          {[['top','Top Tracks'],['playlists','Playlists']].map(([v, l]) => (
+            <button key={v} onClick={() => setView(v)} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '14px 18px', fontSize: 13, fontWeight: 500,
+              color: view === v ? '#e2e8f0' : '#475569',
+              borderBottom: view === v ? '2px solid #1db954' : '2px solid transparent',
+              transition: 'color 0.15s', marginBottom: -1,
+            }}>{l}</button>
           ))}
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          {activeView === 'top' && (
-            <div className="card">
-              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Your Top Tracks (Last 4 Weeks)</h4>
-              <div className="track-list">
-                {topTracks.map((t, i) => (
-                  <div key={t.id} className={`track-row ${track?.id === t.id ? 'active' : ''}`} onClick={() => playTrack(t.uri)}>
-                    <span className="track-num">{i + 1}</span>
-                    <div style={{ width: 36, height: 36, borderRadius: 4, overflow: 'hidden', flexShrink: 0 }}>
-                      <img src={t.album.images?.[2]?.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-                    </div>
-                    <div className="track-info">
-                      <div className="t-name">{t.name}</div>
-                      <div className="t-artist">{t.artists.map(a => a.name).join(', ')}</div>
-                    </div>
-                    <span className="t-dur">{msToTime(t.duration_ms)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+        {/* List */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 4px' }}>
+          {view === 'top' && (
+            <>
+              {topTracks.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: '#475569', fontSize: 13 }}>Loading top tracks…</div>}
+              {topTracks.map((t, i) => (
+                <TrackRow key={t.id} track={t} index={i} active={track?.id === t.id} playing={playing} onClick={() => playUri(t.uri)} />
+              ))}
+            </>
           )}
 
-          {activeView === 'playlists' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+          {view === 'playlists' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: 12, padding: '8px 12px' }}>
               {playlists.map(pl => (
-                <div key={pl.id} className="card" style={{ cursor: 'pointer' }}
-                  onClick={() => playTrack(`spotify:playlist:${pl.id}`)}>
-                  <div style={{ width: '100%', aspectRatio: '1', borderRadius: 8, overflow: 'hidden', marginBottom: 8, background: 'var(--bg3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30 }}>
+                <div key={pl.id} onClick={() => playUri(`spotify:playlist:${pl.id}`)} style={{ borderRadius: 10, overflow: 'hidden', background: '#111827', border: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', transition: 'transform 0.15s, border-color 0.15s' }}
+                  onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.borderColor = 'rgba(29,185,84,0.35)' }}
+                  onMouseOut={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ aspectRatio: '1', background: '#1a2030', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36, overflow: 'hidden' }}>
                     {pl.images?.[0]?.url
                       ? <img src={pl.images[0].url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
                       : '🎵'}
                   </div>
-                  <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pl.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{pl.tracks.total} tracks</div>
+                  <div style={{ padding: '8px 10px 10px' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pl.name}</div>
+                    <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{pl.tracks.total} tracks</div>
+                  </div>
                 </div>
               ))}
-            </div>
-          )}
-
-          {activeView === 'player' && (
-            <div className="card">
-              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Now Playing Context</h4>
-              {track ? (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
-                    <img src={track.album.images?.[1]?.url} style={{ width: 60, height: 60, borderRadius: 8 }} alt="" />
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 15 }}>{track.name}</div>
-                      <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 2 }}>{track.artists.map(a => a.name).join(', ')}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>Album: {track.album.name}</div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-                    {[
-                      ['Popularity', `${track.popularity}%`],
-                      ['Duration', msToTime(track.duration_ms)],
-                      ['Release', track.album.release_date?.split('-')[0]],
-                      ['Explicit', track.explicit ? 'Yes' : 'No'],
-                    ].map(([l, v]) => (
-                      <div key={l} style={{ background: 'var(--bg3)', borderRadius: 6, padding: '8px 10px' }}>
-                        <div style={{ fontSize: 10, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: 1 }}>{l}</div>
-                        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2, color: 'var(--spotify)' }}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p style={{ color: 'var(--text2)', fontSize: 13 }}>No track currently playing. Start something in Spotify!</p>
-              )}
             </div>
           )}
         </div>
