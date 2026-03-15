@@ -166,7 +166,7 @@ function GoogleCalSection({ clientId }) {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {events.map(e => {
+        {events.filter(e => activeCalIds.includes(e.calendarId)).map(e => {
           const cal = calendars.find(c => c.id === e.calendarId)
           return <EventRow key={e.id} event={e} color={cal?.color} source="google" />
         })}
