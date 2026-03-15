@@ -41,6 +41,65 @@ const WEATHER_LAT = 41.1836
 const WEATHER_LON = -89.0651
 const WEATHER_LABEL = 'Lostant, IL'
 
+// ── Snap alignment ─────────────────────────────────────────────────────────────
+const SNAP_THRESHOLD = 10
+
+function findSnap(snapPoints, anchors, threshold) {
+  for (const sp of snapPoints) {
+    for (const { val, offset } of anchors) {
+      if (Math.abs(val - sp) <= threshold) return { pos: sp, result: sp + offset }
+    }
+  }
+  return null
+}
+
+function computeSnap(dragging, otherWidgets, heights, canvasW) {
+  const dw = dragging.w
+  const dh = heights[dragging.id] || 180
+  const dLeft    = dragging.x
+  const dCenterX = dragging.x + dw / 2
+  const dRight   = dragging.x + dw
+  const dTop     = dragging.y
+  const dCenterY = dragging.y + dh / 2
+  const dBottom  = dragging.y + dh
+
+  // Snap points: canvas edges/center + each other widget's edges/center
+  const xPoints = [0, canvasW / 2]
+  const yPoints = [0]
+  for (const w of otherWidgets) {
+    const wh = heights[w.id] || 180
+    xPoints.push(w.x, w.x + w.w / 2, w.x + w.w)
+    yPoints.push(w.y, w.y + wh / 2, w.y + wh)
+  }
+
+  const snapX = findSnap(xPoints, [
+    { val: dLeft,    offset: 0       },
+    { val: dCenterX, offset: -dw / 2 },
+    { val: dRight,   offset: -dw     },
+  ], SNAP_THRESHOLD)
+
+  const snapY = findSnap(yPoints, [
+    { val: dTop,     offset: 0       },
+    { val: dCenterY, offset: -dh / 2 },
+    { val: dBottom,  offset: -dh     },
+  ], SNAP_THRESHOLD)
+
+  const guides = []
+  if (snapX) guides.push({ axis: 'x', pos: snapX.pos })
+  if (snapY) guides.push({ axis: 'y', pos: snapY.pos })
+
+  return {
+    x: Math.max(0, snapX ? snapX.result : dragging.x),
+    y: Math.max(0, snapY ? snapY.result : dragging.y),
+    guides,
+  }
+}
+
+// ── Notion avatar helpers ──────────────────────────────────────────────────────
+const AVATAR_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
+const avatarColor = name => AVATAR_COLORS[(name?.charCodeAt(0) ?? 0) % AVATAR_COLORS.length]
+const nameInitials = name => (name || '?').split(' ').map(n => n[0] || '').join('').toUpperCase().slice(0, 2) || '?'
+
 // ── Widget catalog ─────────────────────────────────────────────────────────────
 const WIDGET_CATALOG = {
   clock:        { label: 'Clock',          icon: '🕐' },
@@ -441,11 +500,34 @@ function NotionWidget({ apiKey, databaseId, w = 380, label }) {
   }
   const getDate = p => {
     for (const [, prop] of Object.entries(p.properties || {})) {
-      if (prop.type === 'date' && prop.date?.start) {
+      if (prop.type === 'date' && prop.date?.start)
         return new Date(prop.date.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      }
     }
     return ''
+  }
+  // Progress: number type (0–100 or 0–1) or formula number
+  const getProgress = p => {
+    for (const [, prop] of Object.entries(p.properties || {})) {
+      if (prop.type === 'number' && prop.number !== null && prop.number !== undefined) {
+        const v = prop.number
+        return Math.round(v <= 1 ? v * 100 : Math.min(v, 100))
+      }
+      if (prop.type === 'formula' && prop.formula?.type === 'number' && prop.formula.number !== null) {
+        const v = prop.formula.number
+        return Math.round(v <= 1 ? v * 100 : Math.min(v, 100))
+      }
+    }
+    return null
+  }
+  // Assignee: people type
+  const getAssignees = p => {
+    for (const [, prop] of Object.entries(p.properties || {})) {
+      if (prop.type === 'people' && prop.people?.length > 0)
+        return prop.people.map(person => person.name || '?').slice(0, 3)
+      if (prop.type === 'created_by' && prop.created_by?.name)
+        return [prop.created_by.name]
+    }
+    return []
   }
 
   if (!apiKey || !databaseId) return (
@@ -488,10 +570,12 @@ function NotionWidget({ apiKey, databaseId, w = 380, label }) {
     )
   }
 
-  // ── lg: filter tabs + full table ──
+  // ── lg: filter tabs + full table with all columns ──
   if (size === 'lg') {
     const allStatuses = ['All', ...new Set(items.map(getStatus).filter(Boolean))]
     const filtered = statusFilter === 'All' ? items : items.filter(item => getStatus(item) === statusFilter)
+    const hasProgress  = items.some(item => getProgress(item) !== null)
+    const hasAssignees = items.some(item => getAssignees(item).length > 0)
     return (
       <div className="widget">
         {headerRow}
@@ -510,19 +594,46 @@ function NotionWidget({ apiKey, databaseId, w = 380, label }) {
                   <tr>
                     <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Title</th>
                     <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Status</th>
+                    {hasAssignees && <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Assignee</th>}
+                    {hasProgress  && <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap', minWidth: 90 }}>Progress</th>}
                     <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Date</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.slice(0, 15).map(item => {
-                    const status = getStatus(item)
-                    const date = getDate(item)
+                    const status    = getStatus(item)
+                    const date      = getDate(item)
+                    const progress  = getProgress(item)
+                    const assignees = getAssignees(item)
                     return (
                       <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '6px 8px', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getTitle(item)}</td>
+                        <td style={{ padding: '6px 8px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getTitle(item)}</td>
                         <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
                           {status && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--text3)', border: '1px solid var(--border)' }}>{status}</span>}
                         </td>
+                        {hasAssignees && (
+                          <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                            <div style={{ display: 'flex', gap: 3 }}>
+                              {assignees.map((name, i) => (
+                                <div key={i} title={name} style={{ width: 20, height: 20, borderRadius: '50%', background: avatarColor(name), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                                  {nameInitials(name)}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        )}
+                        {hasProgress && (
+                          <td style={{ padding: '6px 8px' }}>
+                            {progress !== null ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <div style={{ flex: 1, height: 5, background: 'var(--border2)', borderRadius: 3, overflow: 'hidden' }}>
+                                  <div style={{ height: '100%', width: `${progress}%`, background: progress >= 100 ? 'var(--green)' : progress >= 60 ? 'var(--blue)' : 'var(--purple)', borderRadius: 3, transition: 'width 0.3s' }} />
+                                </div>
+                                <span style={{ fontSize: 10, color: 'var(--text2)', flexShrink: 0, minWidth: 26, textAlign: 'right' }}>{progress}%</span>
+                              </div>
+                            ) : <span style={{ color: 'var(--text2)', fontSize: 11 }}>—</span>}
+                          </td>
+                        )}
                         <td style={{ padding: '6px 8px', color: 'var(--text2)', whiteSpace: 'nowrap', fontSize: 11 }}>{date}</td>
                       </tr>
                     )
@@ -538,19 +649,41 @@ function NotionWidget({ apiKey, databaseId, w = 380, label }) {
     )
   }
 
-  // ── md: standard badge list ──
+  // ── md: list with assignee avatars + progress bars ──
   return (
     <div className="widget">
       {headerRow}
       {loading && !items.length && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading…</div>}
       {error && <div style={{ fontSize: 12, color: '#ef4444' }}>⚠️ {error}</div>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {items.slice(0, 8).map(item => { const status = getStatus(item); return (
-          <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getTitle(item)}</span>
-            {status && <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--text2)', flexShrink: 0 }}>{status}</span>}
-          </div>
-        )})}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {items.slice(0, 8).map(item => {
+          const status    = getStatus(item)
+          const progress  = getProgress(item)
+          const assignees = getAssignees(item)
+          return (
+            <div key={item.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getTitle(item)}</span>
+                <div style={{ display: 'flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
+                  {assignees.map((name, i) => (
+                    <div key={i} title={name} style={{ width: 18, height: 18, borderRadius: '50%', background: avatarColor(name), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 700, color: '#fff' }}>
+                      {nameInitials(name)}
+                    </div>
+                  ))}
+                  {status && <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--text2)' }}>{status}</span>}
+                </div>
+              </div>
+              {progress !== null && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <div style={{ flex: 1, height: 3, background: 'var(--border2)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${progress}%`, background: progress >= 100 ? 'var(--green)' : progress >= 60 ? 'var(--blue)' : 'var(--purple)', borderRadius: 2 }} />
+                  </div>
+                  <span style={{ fontSize: 10, color: 'var(--text2)', flexShrink: 0 }}>{progress}%</span>
+                </div>
+              )}
+            </div>
+          )
+        })}
         {!items.length && !loading && !error && <div style={{ fontSize: 12, color: 'var(--text2)' }}>No items found.</div>}
       </div>
     </div>
@@ -722,6 +855,14 @@ export default function DashboardTab() {
   const resizingDataRef = useRef(null) // { id, startX, origW }
   const resizeWRef      = useRef(null)
 
+  // Snap guides
+  const [snapGuides, setSnapGuides] = useState([])
+
+  // Stable layout ref + widget height measurement
+  const layoutRef       = useRef([])
+  const widgetHeightRef = useRef({})
+  const canvasW = window.innerWidth - (window.innerWidth >= 640 ? 280 : 24)
+
   // Custom widgets
   const customWidgets = (() => { try { return JSON.parse(settings.customWidgets || '[]') } catch { return [] } })()
 
@@ -734,9 +875,11 @@ export default function DashboardTab() {
         typeof saved[0].x === 'number' && typeof saved[0].y === 'number'
       ) return saved
     } catch {}
-    const canvasW = window.innerWidth - (window.innerWidth >= 640 ? 280 : 24)
     return getDefaultLayout(canvasW)
   })()
+
+  // Keep layoutRef in sync each render
+  layoutRef.current = layout
 
   const saveLayout       = nl  => updateSetting('dashboardLayout', JSON.stringify(nl))
   const saveCustomWidgets = cws => updateSetting('customWidgets', JSON.stringify(cws))
@@ -744,17 +887,15 @@ export default function DashboardTab() {
   const removeFromCanvas = id => saveLayout(layout.filter(w => w.id !== id))
 
   const addToCanvas = id => {
-    const canvasW = window.innerWidth - (window.innerWidth >= 640 ? 280 : 24)
-    const halfW   = Math.max(280, Math.floor((canvasW - 12) / 2))
+    const halfW = Math.max(280, Math.floor((canvasW - 12) / 2))
     const maxY    = layout.length ? Math.max(...layout.map(w => w.y)) : 0
     saveLayout([...layout, { id, x: 0, y: maxY + 220, w: halfW }])
     setShowAddPanel(false)
   }
 
   const createCustom = form => {
-    const id  = `custom_${Date.now()}`
-    const canvasW = window.innerWidth - (window.innerWidth >= 640 ? 280 : 24)
-    const halfW   = Math.max(280, Math.floor((canvasW - 12) / 2))
+    const id   = `custom_${Date.now()}`
+    const halfW = Math.max(280, Math.floor((canvasW - 12) / 2))
     const maxY    = layout.length ? Math.max(...layout.map(w => w.y)) : 0
     saveCustomWidgets([...customWidgets, { id, ...form }])
     saveLayout([...layout, { id, x: 0, y: maxY + 220, w: halfW }])
@@ -837,6 +978,7 @@ export default function DashboardTab() {
           return (
             <div
               key={widget.id}
+              ref={el => { if (el) widgetHeightRef.current[widget.id] = el.offsetHeight }}
               style={{
                 position: 'absolute', left, top, width: effectiveW,
                 zIndex: isDragging ? 200 : isResizing ? 150 : 1,
@@ -862,20 +1004,28 @@ export default function DashboardTab() {
                       }}
                       onPointerMove={e => {
                         if (!draggingDataRef.current || draggingDataRef.current.id !== widget.id) return
-                        const dx = e.clientX - draggingDataRef.current.startX
-                        const dy = e.clientY - draggingDataRef.current.startY
-                        liveOffsetRef.current = { x: dx, y: dy }
-                        setLiveOffset({ x: dx, y: dy })
+                        const { startX, startY, origX, origY } = draggingDataRef.current
+                        const rawX = Math.max(0, origX + (e.clientX - startX))
+                        const rawY = Math.max(0, origY + (e.clientY - startY))
+                        const others = layoutRef.current.filter(w => w.id !== widget.id)
+                        const { x: sx, y: sy, guides } = computeSnap(
+                          { id: widget.id, x: rawX, y: rawY, w: widget.w },
+                          others, widgetHeightRef.current, canvasW
+                        )
+                        liveOffsetRef.current = { x: sx - origX, y: sy - origY }
+                        setLiveOffset({ x: sx - origX, y: sy - origY })
+                        setSnapGuides(guides)
                       }}
                       onPointerUp={e => {
                         if (!draggingDataRef.current || draggingDataRef.current.id !== widget.id) return
                         const { origX, origY } = draggingDataRef.current
                         const { x: dx, y: dy } = liveOffsetRef.current
-                        saveLayout(layout.map(w => w.id === widget.id ? { ...w, x: Math.max(0, origX + dx), y: Math.max(0, origY + dy) } : w))
+                        saveLayout(layoutRef.current.map(w => w.id === widget.id ? { ...w, x: Math.max(0, origX + dx), y: Math.max(0, origY + dy) } : w))
                         draggingDataRef.current = null
                         liveOffsetRef.current = { x: 0, y: 0 }
                         setDraggingId(null)
                         setLiveOffset({ x: 0, y: 0 })
+                        setSnapGuides([])
                       }}
                     >⣿</div>
 
@@ -930,6 +1080,17 @@ export default function DashboardTab() {
             </div>
           )
         })}
+
+        {/* Snap alignment guides */}
+        {snapGuides.map((g, i) => (
+          <div key={i} style={{
+            position: 'absolute', pointerEvents: 'none', zIndex: 400,
+            background: 'rgba(59,130,246,0.65)',
+            ...(g.axis === 'x'
+              ? { left: g.pos, top: 0, width: 1, height: '100%' }
+              : { top: g.pos, left: 0, height: 1, width: '100%' }),
+          }} />
+        ))}
       </div>
 
       {/* Add Widget panel + backdrop */}
