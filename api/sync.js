@@ -1,13 +1,11 @@
-import { kv } from '@vercel/kv'
+import { put, list, del } from '@vercel/blob'
 
 const MAX_PAYLOAD_BYTES = 512 * 1024 // 512 KB safety limit
 
 export default async function handler(req, res) {
-  // CORS for same-origin (Vercel serves API + SPA on same domain)
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-
   if (req.method === 'OPTIONS') return res.status(200).end()
 
   const { key } = req.query
@@ -17,20 +15,31 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid key format' })
   }
 
+  const blobPath = `jarvis-sync/${key}.json`
+
   if (req.method === 'GET') {
-    const data = await kv.get(key)
-    return res.status(200).json({ data: data ?? null })
+    const { blobs } = await list({ prefix: blobPath })
+    if (!blobs.length) return res.status(200).json({ data: null })
+    const resp = await fetch(blobs[0].url)
+    const data = await resp.json()
+    return res.status(200).json({ data })
   }
 
   if (req.method === 'POST') {
-    let body = req.body
-    // Vercel parses JSON body automatically; check size
-    const raw = JSON.stringify(body)
-    if (raw.length > MAX_PAYLOAD_BYTES) {
+    const body = req.body
+    if (JSON.stringify(body).length > MAX_PAYLOAD_BYTES) {
       return res.status(413).json({ error: 'Payload too large' })
     }
+    // Remove old blob(s) for this key before writing new one
+    const { blobs: existing } = await list({ prefix: blobPath })
+    if (existing.length) await del(existing.map(b => b.url))
+
     const savedAt = new Date().toISOString()
-    await kv.set(key, { ...body, savedAt }, { ex: 60 * 60 * 24 * 365 }) // 1 year TTL
+    await put(blobPath, JSON.stringify({ ...body, savedAt }), {
+      access: 'public',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+    })
     return res.status(200).json({ ok: true, savedAt })
   }
 
