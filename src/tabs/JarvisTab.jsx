@@ -3,6 +3,7 @@ import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
 import { useGoogleDrive } from '../hooks/useGoogleDrive'
 import { useConversations } from '../hooks/useConversations'
+import { useGmail } from '../hooks/useGmail'
 
 // ── Provider configs ───────────────────────────────────────────
 const PROVIDERS = {
@@ -69,12 +70,57 @@ const PROVIDERS = {
   },
 }
 
+function stripMarkdown(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, match => match.replace(/```\w*\n?/g, '').trim())
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/#{1,6}\s+/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_{1,2}([^_]+)_{1,2}/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ' ')
+    .trim()
+}
+
 function buildSystemPrompt(settings, memory) {
   const name = settings.userName || 'User'
   const facts = memory.facts.map(f => `- ${f.text}`).join('\n') || '(nothing yet)'
   const routines = memory.routines.map(r => `- ${r.description}`).join('\n') || '(none noted yet)'
   const topics = memory.recentTopics.join(', ') || 'none yet'
-  return `You are JARVIS, a highly intelligent personalized AI assistant — like Tony Stark's JARVIS. You are helpful, witty, precise, and proactive. Address the user as "${name}".
+
+  // Pull calendar + email context from localStorage for the daily brief / general context
+  const now = new Date()
+  const calEvents = (() => {
+    try {
+      const events = JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]')
+      const cutoff = new Date(now.getTime() + 7 * 86400000)
+      return events
+        .filter(e => e.start && new Date(e.start) >= now && new Date(e.start) <= cutoff)
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+        .slice(0, 10)
+        .map(e => {
+          const d = new Date(e.start)
+          const dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+          const timeStr = e.allDay ? 'all day' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+          return `- ${dateStr} ${timeStr}: ${e.title}${e.location ? ` @ ${e.location}` : ''}`
+        })
+        .join('\n')
+    } catch { return '' }
+  })()
+
+  const emailSummary = (() => {
+    try {
+      const emails = JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]')
+      if (!emails.length) return ''
+      return emails.slice(0, 5).map(e => `- ${e.unread ? '[UNREAD] ' : ''}${e.subject} — from ${e.from}`).join('\n')
+    } catch { return '' }
+  })()
+
+  return `You are JARVIS, a highly intelligent personalized AI assistant — like Tony Stark's JARVIS. You are helpful, witty, precise, and proactive. Address the user as "${name}". Today is ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
 
 What you know about ${name}:
 ${facts}
@@ -83,6 +129,8 @@ Known routines:
 ${routines}
 
 Recent interests: ${topics}
+${calEvents ? `\nUpcoming calendar events:\n${calEvents}` : ''}
+${emailSummary ? `\nRecent emails:\n${emailSummary}` : ''}
 
 Guidelines:
 - Be concise but thorough. Match the user's energy.
@@ -165,6 +213,7 @@ export default function JarvisTab() {
 
   const drive = useGoogleDrive(settings.googleClientId || null)
   const conversations = useConversations()
+  const gmail = useGmail(settings.googleClientId || null)
 
   // Stable conversation ID for this session
   const convIdRef = useRef(String(Date.now()))
@@ -194,6 +243,12 @@ export default function JarvisTab() {
   const [editingFactId, setEditingFactId] = useState(null)
   const [editingFactText, setEditingFactText] = useState('')
   const [driveConvs, setDriveConvs] = useState([])
+  const [emails, setEmails] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]') } catch { return [] }
+  })
+  const [emailsExpanded, setEmailsExpanded] = useState(false)
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [ttsEnabled, setTtsEnabled] = useState(settings.ttsEnabled || false)
   const messagesEnd = useRef(null)
   const saveTimerRef = useRef(null)
 
@@ -301,6 +356,67 @@ export default function JarvisTab() {
     }
   }, [drive.isSignedIn, drive.saveConversation, conversations])
 
+  // ── TTS ──
+  const speak = useCallback((text) => {
+    if (!window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    const utt = new SpeechSynthesisUtterance(stripMarkdown(text))
+    utt.rate = 0.95
+    utt.pitch = 1
+    window.speechSynthesis.speak(utt)
+  }, [])
+
+  const stopSpeaking = useCallback(() => {
+    window.speechSynthesis?.cancel()
+  }, [])
+
+  const toggleTts = () => {
+    const next = !ttsEnabled
+    setTtsEnabled(next)
+    updateSetting('ttsEnabled', next)
+    if (!next) stopSpeaking()
+  }
+
+  // ── Daily Brief ──
+  const sendDailyBrief = () => {
+    const now = new Date()
+    const todayStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    const calEvents = (() => {
+      try {
+        return JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]')
+          .filter(e => e.start && new Date(e.start).toDateString() === now.toDateString())
+          .map(e => `- ${e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}: ${e.title}`)
+          .join('\n')
+      } catch { return '' }
+    })()
+    const emailLines = emails.slice(0, 3).map(e => `- ${e.unread ? '[UNREAD] ' : ''}${e.subject} from ${e.from}`).join('\n')
+    let prompt = `Give me my morning briefing for ${todayStr}. Be concise and conversational.`
+    if (calEvents) prompt += `\n\nToday's events:\n${calEvents}`
+    if (emailLines) prompt += `\n\nRecent emails:\n${emailLines}`
+    setInput(prompt)
+  }
+
+  // ── Gmail fetch ──
+  const loadEmails = useCallback(async () => {
+    if (!gmail.isSignedIn) return
+    setEmailLoading(true)
+    try {
+      const fetched = await gmail.fetchEmails(10)
+      setEmails(fetched)
+      localStorage.setItem('jarvis_email_summary', JSON.stringify(fetched))
+      window.dispatchEvent(new CustomEvent('jarvis:email-updated'))
+    } catch (e) {
+      console.error('Gmail fetch failed:', e)
+    } finally {
+      setEmailLoading(false)
+    }
+  }, [gmail.isSignedIn, gmail.fetchEmails])
+
+  // Auto-load emails on sign-in
+  useEffect(() => {
+    if (gmail.isSignedIn && !emails.length) loadEmails()
+  }, [gmail.isSignedIn])
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return
 
@@ -334,6 +450,7 @@ export default function JarvisTab() {
       const finalMessages = [...nextMessages, assistantMsg]
       setMessages(finalMessages)
       scheduleSave(finalMessages)
+      if (ttsEnabled) speak(reply)
 
       const words = input.split(' ').filter(w => w.length > 4)
       if (words.length) addTopic(words.slice(0, 3).join(' '))
@@ -421,6 +538,26 @@ export default function JarvisTab() {
               </button>
             </div>
           )}
+          {/* Daily Brief */}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={sendDailyBrief}
+            title="Generate your daily briefing"
+            style={{ fontSize: 13 }}
+          >
+            📋
+          </button>
+
+          {/* TTS toggle */}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={toggleTts}
+            title={ttsEnabled ? 'TTS on — click to mute' : 'TTS off — click to enable'}
+            style={{ fontSize: 13, color: ttsEnabled ? 'var(--cyan)' : undefined }}
+          >
+            {ttsEnabled ? '🔊' : '🔇'}
+          </button>
+
           <button className="btn btn-ghost btn-sm memory-toggle-btn" onClick={() => setShowMemory(s => !s)}>
             {showMemory ? '💬' : '🧠'}
           </button>
@@ -448,7 +585,18 @@ export default function JarvisTab() {
               </div>
               <div className="bubble-body">
                 <div className="bubble-text">{msg.content}</div>
-                <div className="bubble-time">{msg.time}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, paddingLeft: 4 }}>
+                  <span className="bubble-time">{msg.time}</span>
+                  {msg.role === 'assistant' && msg.id !== 'welcome' && (
+                    <button
+                      onClick={() => speak(msg.content)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text2)', padding: '0 2px', lineHeight: 1, opacity: 0.6 }}
+                      title="Read aloud"
+                    >
+                      🔊
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -700,10 +848,66 @@ export default function JarvisTab() {
           </div>
         )}
 
+        {/* Gmail */}
+        {settings.googleClientId && (
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>✉️ Gmail</h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {gmail.isSignedIn && (
+                  <>
+                    <span className="badge badge-blue">{emails.filter(e => e.unread).length} unread</span>
+                    <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                      onClick={loadEmails} disabled={emailLoading} title="Refresh">
+                      {emailLoading ? '⏳' : '↻'}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                      onClick={() => setEmailsExpanded(e => !e)}>
+                      {emailsExpanded ? '▲' : '▼'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {!gmail.isSignedIn ? (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={gmail.signIn}
+                disabled={gmail.signInStatus === 'signing-in'}
+                style={{ width: '100%', fontSize: 12, justifyContent: 'center' }}
+              >
+                {gmail.signInStatus === 'signing-in' ? '⏳ Signing in…' : '🔑 Connect Gmail'}
+              </button>
+            ) : emailsExpanded && (
+              emails.length === 0 && !emailLoading
+                ? <p style={{ fontSize: 11, color: 'var(--text2)' }}>No recent emails.</p>
+                : emails.map(e => (
+                  <div key={e.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      {e.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0, display: 'inline-block' }} />}
+                      <span style={{ fontWeight: e.unread ? 600 : 400, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {e.subject}
+                      </span>
+                    </div>
+                    <div style={{ color: 'var(--text2)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {e.from}
+                    </div>
+                    {e.snippet && (
+                      <div style={{ color: 'var(--text2)', fontSize: 10, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {e.snippet}
+                      </div>
+                    )}
+                  </div>
+                ))
+            )}
+          </div>
+        )}
+
         {/* Quick prompts */}
         <div className="card">
           <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>⚡ Quick Prompts</h4>
-          {["What's my schedule today?", "Summarize my routine", "What should I focus on?", "Any suggestions for tonight?"].map(p => (
+          {["What's my schedule today?", "Summarize my emails", "What should I focus on?", "Give me my daily brief"].map(p => (
             <div key={p} className="memory-item" style={{ cursor: 'pointer' }} onClick={() => setInput(p)}>
               <span className="mem-icon">→</span>
               <span className="mem-text">{p}</span>

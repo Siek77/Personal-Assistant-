@@ -39,6 +39,8 @@ const DEFAULTS = {
   calDavPassword: '',
   // Uptime monitoring — JSON string of [{label, url}]
   uptimeUrls: '[]',
+  // TTS
+  ttsEnabled: false,
 }
 
 // Convert #rrggbb to "r,g,b"

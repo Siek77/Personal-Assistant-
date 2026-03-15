@@ -213,6 +213,16 @@ export default async function handler(req, res) {
     if (lines.length) notionSummary = `\nNotion tasks/notes:\n${lines.map(l => `- ${l}`).join('\n')}`
   }
 
+  // ── Email summary from synced blob (written by JarvisTab Gmail section) ──
+  let emailSummary = ''
+  const emails = synced?.emailSummary || []
+  if (emails.length) {
+    const lines = emails.slice(0, 5).map(e =>
+      `- ${e.unread ? '[UNREAD] ' : ''}${e.subject} — from ${e.from}`
+    )
+    if (lines.length) emailSummary = `\nRecent emails:\n${lines.join('\n')}`
+  }
+
   // ── Calendar events from synced blob (written by CalendarTab) ──
   let calendarSummary = ''
   const calEvents = synced?.calendarEvents || []
@@ -254,6 +264,7 @@ export default async function handler(req, res) {
     entitySummary,
     notionSummary,
     calendarSummary,
+    emailSummary,
     `
 STRICT voice rules — you are speaking through Amazon Alexa:
 - Maximum 2 sentences. Never use lists, markdown, bullet points, or special characters.

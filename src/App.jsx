@@ -45,35 +45,42 @@ function SyncAutoManager() {
     })()
   }, [])
 
-  // Also sync when calendar events change (CalendarTab dispatches 'jarvis:calendar-updated')
-  useEffect(() => {
-    const onCalUpdate = () => {
-      const passphrase = localStorage.getItem('jarvis_sync_passphrase')
-      if (!passphrase) return
-      if (timerRef.current) clearTimeout(timerRef.current)
-      timerRef.current = setTimeout(async () => {
-        try {
-          const key = await hashPassphrase(passphrase)
-          const payload = {
-            settings,
-            esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
-            memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
-            recentConv: JSON.parse(localStorage.getItem('jarvis_recent_conv') || '[]'),
-            calendarEvents: JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]'),
-          }
-          const res = await fetch(`/api/sync?key=${key}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          })
-          const { savedAt } = await res.json()
-          if (savedAt) localStorage.setItem('jarvis_last_synced', savedAt)
-        } catch {}
-      }, 2000)
-    }
-    window.addEventListener('jarvis:calendar-updated', onCalUpdate)
-    return () => window.removeEventListener('jarvis:calendar-updated', onCalUpdate)
+  // Shared sync helper — used by calendar + email event listeners
+  const syncNow = useCallback(async () => {
+    const passphrase = localStorage.getItem('jarvis_sync_passphrase')
+    if (!passphrase) return
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(async () => {
+      try {
+        const key = await hashPassphrase(passphrase)
+        const payload = {
+          settings,
+          esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
+          memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
+          recentConv: JSON.parse(localStorage.getItem('jarvis_recent_conv') || '[]'),
+          calendarEvents: JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]'),
+          emailSummary: JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]'),
+        }
+        const res = await fetch(`/api/sync?key=${key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const { savedAt } = await res.json()
+        if (savedAt) localStorage.setItem('jarvis_last_synced', savedAt)
+      } catch {}
+    }, 2000)
   }, [settings])
+
+  // Sync when calendar or email events change
+  useEffect(() => {
+    window.addEventListener('jarvis:calendar-updated', syncNow)
+    window.addEventListener('jarvis:email-updated', syncNow)
+    return () => {
+      window.removeEventListener('jarvis:calendar-updated', syncNow)
+      window.removeEventListener('jarvis:email-updated', syncNow)
+    }
+  }, [syncNow])
 
   // Auto-push on settings OR memory change (debounced 2s, skip initial render)
   useEffect(() => {
@@ -90,6 +97,7 @@ function SyncAutoManager() {
           memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
           recentConv: JSON.parse(localStorage.getItem('jarvis_recent_conv') || '[]'),
           calendarEvents: JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]'),
+          emailSummary: JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]'),
         }
         const res = await fetch(`/api/sync?key=${key}`, {
           method: 'POST',
@@ -101,7 +109,7 @@ function SyncAutoManager() {
       } catch {}
     }, 2000)
     return () => clearTimeout(timerRef.current)
-  }, [settings, memory])  // ← memory added here
+  }, [settings, memory])
 
   return null
 }
