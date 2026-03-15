@@ -118,7 +118,44 @@ textarea.input { resize: none; line-height: 1.6; }
 .flex-1 { flex: 1; }
 .w-full { width: 100%; }
 
-@media (max-width: 768px) {
-  :root { --sidebar: 0px; }
+/* ===== MOBILE ===== */
+@media (max-width: 640px) {
+  :root {
+    --sidebar: 0px;
+    --header: 48px;
+    --bottom-nav: 62px;
+  }
+
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
+
+  /* hide sidebar entirely on mobile */
+  .sidebar { display: none; }
+
+  /* bottom nav bar */
+  .bottom-nav {
+    display: flex !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: var(--bottom-nav);
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    z-index: 100;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* tab content must not be hidden behind bottom nav */
+  .tab-content {
+    padding: 12px 12px calc(var(--bottom-nav) + 8px);
+  }
+
+  /* topbar compact */
+  .topbar { padding: 0 14px; }
+  .topbar-greeting { font-size: 13px; color: var(--text2); }
+  .topbar-time { font-size: 12px; }
+}
+
+/* ===== DESKTOP — hide bottom nav ===== */
+@media (min-width: 641px) {
+  .bottom-nav { display: none; }
+  :root { --bottom-nav: 0px; }
 }

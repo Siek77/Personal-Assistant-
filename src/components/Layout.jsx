@@ -18,16 +18,16 @@ export default function Layout({ activeTab, setActiveTab, children }) {
 
   const greeting = () => {
     const h = time.getHours()
-    if (h < 12) return 'Good morning'
-    if (h < 17) return 'Good afternoon'
-    return 'Good evening'
+    if (h < 12) return 'Morning'
+    if (h < 17) return 'Afternoon'
+    return 'Evening'
   }
 
   return (
     <div className="app-shell">
       {settings.scanlineEffect && <div className="scanline-overlay" />}
 
-      {/* Sidebar */}
+      {/* Sidebar — desktop only */}
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="logo-name">JARVIS</div>
@@ -65,7 +65,7 @@ export default function Layout({ activeTab, setActiveTab, children }) {
       <div className="main-content">
         <header className="topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 14, color: 'var(--text2)' }}>
+            <span className="topbar-greeting">
               {greeting()}, <span style={{ color: 'var(--text)', fontWeight: 600 }}>{settings.userName || 'User'}</span>
             </span>
           </div>
@@ -80,6 +80,22 @@ export default function Layout({ activeTab, setActiveTab, children }) {
           {children}
         </div>
       </div>
+
+      {/* Bottom tab bar — mobile only */}
+      <nav className="bottom-nav">
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            className={`bottom-nav-item ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+            style={activeTab === tab.id ? { '--tab-color': tab.color } : {}}
+          >
+            <span className="bottom-nav-icon">{tab.icon}</span>
+            <span className="bottom-nav-label">{tab.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   )
 }
+

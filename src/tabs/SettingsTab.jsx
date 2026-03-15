@@ -68,28 +68,28 @@ export default function SettingsTab() {
   }
 
   return (
-    <div style={{ height: 'calc(100vh - var(--header) - 40px)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+    <div className="settings-shell">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text2)' }}>⚙️ Settings</h2>
         {saved && <span style={{ fontSize: 12, color: 'var(--green)' }}>✓ Saved</span>}
       </div>
 
-      <div className="settings-grid" style={{ height: 'calc(100% - 44px)' }}>
-        {/* Sidebar nav */}
-        <div className="settings-nav" style={{ overflowY: 'auto' }}>
+      <div className="settings-grid">
+        {/* Sidebar nav — desktop vertical / mobile horizontal strip */}
+        <div className="settings-nav">
           {SECTIONS.map(s => (
             <div
               key={s.id}
               className={`settings-nav-item ${activeSection === s.id ? 'active' : ''}`}
               onClick={() => setActiveSection(s.id)}
             >
-              <span>{s.icon}</span> {s.label.replace(/^.+ /, '')}
+              <span>{s.icon}</span> <span className="settings-nav-label">{s.label.replace(/^.+ /, '')}</span>
             </div>
           ))}
         </div>
 
         {/* Content */}
-        <div style={{ overflowY: 'auto' }}>
+        <div className="settings-content">
           <div className="card">
 
             {/* Profile */}

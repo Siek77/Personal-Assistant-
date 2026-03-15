@@ -170,6 +170,7 @@ export default function JarvisTab() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [newFact, setNewFact] = useState('')
+  const [showMemory, setShowMemory] = useState(false)
   const messagesEnd = useRef(null)
 
   useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
@@ -254,6 +255,9 @@ export default function JarvisTab() {
             ))}
           </select>
 
+          <button className="btn btn-ghost btn-sm memory-toggle-btn" onClick={() => setShowMemory(s => !s)}>
+            {showMemory ? '💬' : '🧠'}
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={clearChat}>Clear</button>
         </div>
 
@@ -323,7 +327,7 @@ export default function JarvisTab() {
       </div>
 
       {/* ── Memory Panel ── */}
-      <div className="memory-panel">
+      <div className={`memory-panel ${showMemory ? 'memory-panel--open' : ''}`}>
         {/* Memory */}
         <div className="card" style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
