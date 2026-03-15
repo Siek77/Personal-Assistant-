@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
 
@@ -477,126 +477,6 @@ function NotionWidget({ apiKey, databaseId }) {
   )
 }
 
-// ── Apple Music Widget ────────────────────────────────────────────────────────
-
-function AppleMusicWidget({ developerToken }) {
-  const [status, setStatus] = useState('idle') // 'idle'|'loading'|'authorized'|'error'
-  const [nowPlaying, setNowPlaying] = useState(null)
-  const mkRef = useRef(null)
-  const pollRef = useRef(null)
-
-  const loadMusicKit = () => new Promise((resolve, reject) => {
-    if (window.MusicKit) { resolve(); return }
-    const s = document.createElement('script')
-    s.src = 'https://js-cdn.music.apple.com/musickit/v3/musickit.js'
-    s.onload = () => {
-      document.addEventListener('musickitloaded', resolve, { once: true })
-    }
-    s.onerror = reject
-    document.head.appendChild(s)
-  })
-
-  const connect = async () => {
-    if (!developerToken) return
-    setStatus('loading')
-    try {
-      await loadMusicKit()
-      await window.MusicKit.configure({ developerToken, app: { name: 'JARVIS Dashboard', build: '1.0.0' } })
-      mkRef.current = window.MusicKit.getInstance()
-      await mkRef.current.authorize()
-      setStatus('authorized')
-      startPolling()
-    } catch (e) {
-      setStatus('error')
-    }
-  }
-
-  const startPolling = () => {
-    const poll = () => {
-      if (!mkRef.current) return
-      const np = mkRef.current.nowPlayingItem
-      setNowPlaying(np ? {
-        title: np.title,
-        artist: np.artistName,
-        album: np.albumName,
-        artwork: np.artwork?.url(100, 100),
-        isPlaying: mkRef.current.playbackState === 2,
-      } : null)
-    }
-    poll()
-    pollRef.current = setInterval(poll, 5000)
-  }
-
-  useEffect(() => () => clearInterval(pollRef.current), [])
-
-  const togglePlay = async () => {
-    if (!mkRef.current) return
-    if (mkRef.current.playbackState === 2) await mkRef.current.pause()
-    else await mkRef.current.play()
-    setNowPlaying(np => np ? { ...np, isPlaying: !np?.isPlaying } : null)
-  }
-
-  if (!developerToken) {
-    return (
-      <div className="widget widget-wide">
-        <div className="widget-header"><span>🎵</span> Apple Music</div>
-        <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-          Add your Apple Music MusicKit Developer Token in Settings → Apple Music to connect.
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="widget widget-wide">
-      <div className="widget-header"><span>🎵</span> Apple Music</div>
-
-      {status === 'idle' && (
-        <button className="btn btn-primary btn-sm" onClick={connect}
-          style={{ background: '#fc3c44', borderColor: '#fc3c44', fontSize: 12 }}>
-          Connect Apple Music
-        </button>
-      )}
-      {status === 'loading' && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Connecting…</div>}
-      {status === 'error' && (
-        <div style={{ fontSize: 12, color: '#ef4444' }}>
-          ⚠️ Connection failed — check your developer token.
-          <button className="btn btn-ghost btn-sm" onClick={connect} style={{ marginLeft: 8, fontSize: 11 }}>Retry</button>
-        </div>
-      )}
-
-      {status === 'authorized' && (
-        <div>
-          {nowPlaying ? (
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              {nowPlaying.artwork && (
-                <img src={nowPlaying.artwork} alt="art" style={{ width: 48, height: 48, borderRadius: 6, flexShrink: 0 }} />
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {nowPlaying.title}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
-                  {nowPlaying.artist} · {nowPlaying.album}
-                </div>
-              </div>
-              <button
-                onClick={togglePlay}
-                style={{ width: 32, height: 32, borderRadius: '50%', background: '#fc3c44', border: 'none', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}
-              >
-                {nowPlaying.isPlaying ? '⏸' : '▶'}
-              </button>
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--text2)' }}>Nothing playing right now.</div>
-          )}
-          <div style={{ fontSize: 10, color: 'var(--green)', marginTop: 6 }}>● Connected to Apple Music</div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function DashboardTab() {
@@ -622,8 +502,7 @@ export default function DashboardTab() {
         <ESP32SensorWidget />
         <UptimeWidget uptimeUrlsJson={settings.uptimeUrls} />
         <NotionWidget apiKey={settings.notionApiKey} databaseId={settings.notionDatabaseId} />
-        <AppleMusicWidget developerToken={settings.appleMusicDeveloperToken} />
-        <NewsWidget apiKey={settings.newsApiKey} />
+<NewsWidget apiKey={settings.newsApiKey} />
       </div>
     </div>
   )

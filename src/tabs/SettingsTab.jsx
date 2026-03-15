@@ -16,7 +16,6 @@ const SECTIONS = [
   { id: 'esp32',      label: '📡 ESP32',      icon: '📡' },
   { id: 'home',       label: '🏠 Home',       icon: '🏠' },
   { id: 'calendar',   label: '📅 Calendar',   icon: '📅' },
-  { id: 'music',      label: '🎵 Apple Music',icon: '🎵' },
   { id: 'notion',     label: '📝 Notion',     icon: '📝' },
   { id: 'uptime',     label: '🟢 Uptime',     icon: '🟢' },
   { id: 'services',   label: '🔌 Services',   icon: '🔌' },
@@ -460,38 +459,6 @@ export default function SettingsTab() {
                   />
                   <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
                     Credentials are sent to the /api/apple-calendar proxy only when you load calendars — never stored server-side.
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Apple Music */}
-            {activeSection === 'music' && (
-              <div className="settings-section">
-                <h3>Apple Music</h3>
-                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-                  Connect Apple Music via <strong>MusicKit JS</strong> to show now-playing info and playback controls in the Dashboard.
-                  Requires an Apple Developer account and a MusicKit key.
-                </p>
-                <InputSetting
-                  label="MusicKit Developer Token"
-                  desc="A JWT signed with your MusicKit key (ES256). Valid for up to 6 months."
-                  value={settings.appleMusicDeveloperToken || ''}
-                  onChange={v => save('appleMusicDeveloperToken', v)}
-                  type="password"
-                  placeholder="eyJhbGciOiJFUzI1NiIsInR5cCI6..."
-                />
-                <div style={{ marginTop: 16, padding: 12, background: 'rgba(252,60,68,0.08)', border: '1px solid rgba(252,60,68,0.2)', borderRadius: 8 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#fc3c44', marginBottom: 8 }}>How to get a Developer Token</div>
-                  <ol style={{ fontSize: 12, color: 'var(--text2)', paddingLeft: 16, lineHeight: 1.8 }}>
-                    <li>Go to <strong>developer.apple.com</strong> → Certificates, IDs & Profiles</li>
-                    <li>Create a <strong>MusicKit</strong> key (Keys section)</li>
-                    <li>Download the .p8 private key file</li>
-                    <li>Generate a JWT using your Team ID, Key ID, and .p8 file</li>
-                    <li>Paste the resulting token above</li>
-                  </ol>
-                  <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text2)' }}>
-                    Tools to generate the token: <code>music-jwt</code> npm package, or use Apple's JWT signing scripts.
                   </div>
                 </div>
               </div>

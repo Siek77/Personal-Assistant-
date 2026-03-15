@@ -61,7 +61,7 @@ function EventRow({ event, color = '#3b82f6', source }) {
 
 // ── Google Calendar section ───────────────────────────────────────────────────
 
-function GoogleCalSection({ clientId }) {
+function GoogleCalSection({ clientId, selectedDay }) {
   const { token, signInStatus, signIn, signOut, listCalendars, listEvents } = useGoogleCalendar(clientId)
   const [calendars, setCalendars] = useState([])
   const [events, setEvents] = useState([])
@@ -166,7 +166,7 @@ function GoogleCalSection({ clientId }) {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {events.filter(e => activeCalIds.includes(e.calendarId)).map(e => {
+        {events.filter(e => activeCalIds.includes(e.calendarId) && sameDay(e.start, selectedDay)).map(e => {
           const cal = calendars.find(c => c.id === e.calendarId)
           return <EventRow key={e.id} event={e} color={cal?.color} source="google" />
         })}
@@ -177,7 +177,7 @@ function GoogleCalSection({ clientId }) {
 
 // ── Apple Calendar (CalDAV) section ──────────────────────────────────────────
 
-function AppleCalSection({ email, password }) {
+function AppleCalSection({ email, password, selectedDay }) {
   const [calendars, setCalendars] = useState([])
   const [events, setEvents] = useState([])
   const [activeCalUrls, setActiveCalUrls] = useState([])
@@ -295,7 +295,7 @@ function AppleCalSection({ email, password }) {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {events.map((e, i) => <EventRow key={e.uid || i} event={e} color="#555" source="apple" />)}
+        {events.filter(e => sameDay(e.start, selectedDay)).map((e, i) => <EventRow key={e.uid || i} event={e} color="#555" source="apple" />)}
       </div>
     </div>
   )
@@ -306,6 +306,7 @@ function AppleCalSection({ email, password }) {
 export default function CalendarTab() {
   const { settings } = useSettings()
   const [view, setView] = useState('google') // 'google' | 'apple' | 'merged'
+  const [selectedDayIdx, setSelectedDayIdx] = useState(0)
   const days = getDays(14)
 
   return (
@@ -333,11 +334,11 @@ export default function CalendarTab() {
       {/* Day strip — next 7 days quick view */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto', paddingBottom: 4 }}>
         {days.slice(0, 7).map((d, i) => (
-          <div key={i} style={{
+          <div key={i} onClick={() => setSelectedDayIdx(i)} style={{
             flexShrink: 0, width: 54, textAlign: 'center',
-            padding: '8px 4px', borderRadius: 10,
-            background: i === 0 ? '#ec4899' : 'var(--bg3)',
-            color: i === 0 ? '#fff' : 'var(--text2)',
+            padding: '8px 4px', borderRadius: 10, cursor: 'pointer',
+            background: i === selectedDayIdx ? '#ec4899' : 'var(--bg3)',
+            color: i === selectedDayIdx ? '#fff' : 'var(--text2)',
           }}>
             <div style={{ fontSize: 10, fontWeight: 600 }}>
               {d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}
@@ -354,13 +355,13 @@ export default function CalendarTab() {
         {view === 'google' && (
           <>
             <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: '#4285f4' }}>Google Calendar</h3>
-            <GoogleCalSection clientId={settings.googleClientId} />
+            <GoogleCalSection clientId={settings.googleClientId} selectedDay={days[selectedDayIdx]} />
           </>
         )}
         {view === 'apple' && (
           <>
             <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: 'var(--text)' }}>Apple Calendar (iCloud)</h3>
-            <AppleCalSection email={settings.calDavEmail} password={settings.calDavPassword} />
+            <AppleCalSection email={settings.calDavEmail} password={settings.calDavPassword} selectedDay={days[selectedDayIdx]} />
           </>
         )}
       </div>

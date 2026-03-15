@@ -27,8 +27,6 @@ const DEFAULTS = {
   // Notion
   notionApiKey: '',
   notionDatabaseId: '',
-  // Apple Music (MusicKit JS)
-  appleMusicDeveloperToken: '',
   // Apple Calendar (CalDAV)
   calDavEmail: '',
   calDavPassword: '',
