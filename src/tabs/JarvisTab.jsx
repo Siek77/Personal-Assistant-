@@ -535,6 +535,11 @@ export default function JarvisTab() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="badge badge-blue">{driveConvs.length}</span>
                 <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                  title="Refresh history"
+                  onClick={() => drive.listAllConversations().then(setDriveConvs).catch(() => {})}>
+                  ↻
+                </button>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
                   onClick={() => setDriveConvsExpanded(e => !e)}>
                   {driveConvsExpanded ? '▲' : '▼'}
                 </button>
