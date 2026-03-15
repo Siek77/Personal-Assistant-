@@ -55,7 +55,8 @@ export function useGoogleDrive(clientId) {
   const signIn = useCallback(() => {
     if (!clientRef.current) return
     setSignInStatus('signing-in')
-    clientRef.current.requestAccessToken({ prompt: '' })
+    // Always show consent screen so the drive.file scope is explicitly granted
+    clientRef.current.requestAccessToken({ prompt: 'consent' })
   }, [])
 
   const signOut = useCallback(() => {
