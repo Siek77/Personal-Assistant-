@@ -19,6 +19,52 @@
 
 import { list } from '@vercel/blob'
 
+// Fetch Notion database pages (tasks, notes, etc.) with 3s timeout
+async function fetchNotionTasks(apiKey, dbId) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 3000)
+  try {
+    const r = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ page_size: 25 }),
+      signal: controller.signal,
+    })
+    if (!r.ok) return null
+    return r.json()
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Extract a human-readable summary line from a Notion page
+function formatNotionPage(page) {
+  const props = page.properties || {}
+  let title = ''
+  const extras = []
+  for (const prop of Object.values(props)) {
+    if (prop.type === 'title') {
+      title = (prop.title || []).map(t => t.plain_text).join('')
+    } else if (prop.type === 'checkbox') {
+      extras.push(prop.checkbox ? 'done' : 'pending')
+    } else if (prop.type === 'status' && prop.status?.name) {
+      extras.push(prop.status.name)
+    } else if (prop.type === 'select' && prop.select?.name) {
+      extras.push(prop.select.name)
+    } else if (prop.type === 'date' && prop.date?.start) {
+      extras.push(prop.date.start.slice(0, 10))
+    }
+  }
+  if (!title) return null
+  return extras.length ? `${title} [${extras.join(', ')}]` : title
+}
+
 // Fetch synced JARVIS data from Vercel Blob (same store the site pushes to)
 async function fetchSyncedData(syncKey) {
   if (!syncKey || !/^[a-f0-9]{64}$/.test(syncKey)) return null
@@ -109,27 +155,67 @@ export default async function handler(req, res) {
     ? (process.env.USER_FACTS || '').split(',').map(f => f.trim()).filter(Boolean).map(f => `- ${f}`).join('\n')
     : ''
 
-  // ── Fetch live HA entity states (reuse early fetch if available) ──
+  const notionKey = syncedSettings.notionApiKey || ''
+  const notionDbId = syncedSettings.notionDatabaseId || ''
+
+  // ── Kick off HA states + Notion in parallel ──
+  const useEarlyHa = earlyHaPromise && haUrl === envHaUrl && haToken === envHaToken
+  const haStatesPromise = haEnabled
+    ? (useEarlyHa ? earlyHaPromise : fetchHaStates(haUrl, haToken))
+    : Promise.resolve(null)
+  const notionPromise = (notionKey && notionDbId)
+    ? fetchNotionTasks(notionKey, notionDbId)
+    : Promise.resolve(null)
+
+  const [haStates, notionData] = await Promise.all([haStatesPromise, notionPromise])
+
+  // ── Format HA entity summary ──
   let entitySummary = ''
-  if (haEnabled) {
+  if (haStates) {
     try {
-      // If creds match env vars we already started this fetch in parallel; otherwise start now
-      const useEarly = earlyHaPromise && haUrl === envHaUrl && haToken === envHaToken
-      const states = await (useEarly ? earlyHaPromise : fetchHaStates(haUrl, haToken))
-      if (states) {
-        const DOMAINS = ['light', 'switch', 'climate', 'media_player', 'sensor', 'binary_sensor', 'lock', 'cover', 'fan', 'input_boolean']
-        const lines = states
-          .filter(e => DOMAINS.some(d => e.entity_id.startsWith(d + '.')))
-          .slice(0, 60)
-          .map(e => {
-            const name = e.attributes?.friendly_name
-            const extra = e.attributes?.temperature || e.attributes?.current_temperature
-            return `${e.entity_id}: ${e.state}${name ? ` (${name})` : ''}${extra ? ` [${extra}°]` : ''}`
-          })
-        if (lines.length) entitySummary = `\nCurrent home state:\n${lines.join('\n')}`
-      }
-    } catch { /* HA unreachable, continue without */ }
+      const DOMAINS = ['light', 'switch', 'climate', 'media_player', 'sensor', 'binary_sensor', 'lock', 'cover', 'fan', 'input_boolean']
+      const lines = haStates
+        .filter(e => DOMAINS.some(d => e.entity_id.startsWith(d + '.')))
+        .slice(0, 60)
+        .map(e => {
+          const name = e.attributes?.friendly_name
+          const extra = e.attributes?.temperature || e.attributes?.current_temperature
+          return `${e.entity_id}: ${e.state}${name ? ` (${name})` : ''}${extra ? ` [${extra}°]` : ''}`
+        })
+      if (lines.length) entitySummary = `\nCurrent home state:\n${lines.join('\n')}`
+    } catch { /* ignore */ }
   }
+
+  // ── Format Notion tasks summary ──
+  let notionSummary = ''
+  if (notionData?.results?.length) {
+    const lines = notionData.results.map(formatNotionPage).filter(Boolean).slice(0, 20)
+    if (lines.length) notionSummary = `\nNotion tasks/notes:\n${lines.map(l => `- ${l}`).join('\n')}`
+  }
+
+  // ── Calendar events from synced blob (written by CalendarTab) ──
+  let calendarSummary = ''
+  const calEvents = synced?.calendarEvents || []
+  if (calEvents.length) {
+    const now = new Date()
+    const cutoff = new Date(now.getTime() + 7 * 86400000)
+    const upcoming = calEvents
+      .filter(e => e.start && new Date(e.start) >= now && new Date(e.start) <= cutoff)
+      .sort((a, b) => new Date(a.start) - new Date(b.start))
+      .slice(0, 15)
+      .map(e => {
+        const d = new Date(e.start)
+        const dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+        const timeStr = e.allDay ? 'All day' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        return `- ${dateStr} ${timeStr}: ${e.title}${e.location ? ` @ ${e.location}` : ''}`
+      })
+    if (upcoming.length) calendarSummary = `\nUpcoming events (next 7 days):\n${upcoming.join('\n')}`
+  }
+
+  // ── Recent conversation history from synced blob (written by JarvisTab) ──
+  const recentConv = (synced?.recentConv || [])
+    .filter(m => m.role && m.content)
+    .slice(-12) // last 12 turns max
 
   // ── System prompt (voice-optimised — no markdown) ──
   const memorySection = [
@@ -141,9 +227,11 @@ export default async function handler(req, res) {
   ].filter(Boolean).join('\n')
 
   const systemPrompt = [
-    `You are JARVIS, a highly intelligent personal assistant. Address the user as "${userName}".`,
+    `You are JARVIS, a highly intelligent personal assistant. Address the user as "${userName}". Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`,
     memorySection,
     entitySummary,
+    notionSummary,
+    calendarSummary,
     `
 STRICT voice rules — you are speaking through Amazon Alexa:
 - Maximum 2 sentences. Never use lists, markdown, bullet points, or special characters.
@@ -185,8 +273,9 @@ STRICT voice rules — you are speaking through Amazon Alexa:
     },
   ] : []
 
-  // Build message history (cap at last 6 to stay within Groq token limits)
+  // Build message history — prior session context + current session (cap to avoid token bloat)
   const messages = [
+    ...recentConv,
     ...sessionHistory.slice(-6),
     { role: 'user', content: text.trim() },
   ]

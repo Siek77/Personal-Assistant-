@@ -4,6 +4,21 @@ import { useGoogleCalendar } from '../hooks/useGoogleCalendar'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Persist events to localStorage so voice.js can read them via blob sync
+function persistCalEvents(events, source) {
+  try {
+    const existing = JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]')
+    const merged = [
+      ...existing.filter(e => e.source !== source),
+      ...events
+        .filter(e => e.start && new Date(e.start) >= new Date())
+        .slice(0, 40)
+        .map(({ title, start, end, allDay, location }) => ({ title, start, end, allDay, location, source })),
+    ]
+    localStorage.setItem('jarvis_calendar_events', JSON.stringify(merged))
+  } catch { /* ignore storage errors */ }
+}
+
 function formatTime(iso) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -83,7 +98,9 @@ function GoogleCalSection({ clientId, selectedDay }) {
       const allEvents = await Promise.all(
         ids.slice(0, 5).map(id => listEvents(id, now.toISOString(), end.toISOString()).catch(() => []))
       )
-      setEvents(allEvents.flat().sort((a, b) => new Date(a.start) - new Date(b.start)))
+      const sorted = allEvents.flat().sort((a, b) => new Date(a.start) - new Date(b.start))
+      setEvents(sorted)
+      if (sorted.length) persistCalEvents(sorted, 'google')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -234,7 +251,9 @@ function AppleCalSection({ email, password, selectedDay }) {
           }).then(r => r.json()).then(d => d.events || []).catch(() => [])
         )
       )
-      setEvents(allEvents.flat().sort((a, b) => new Date(a.start) - new Date(b.start)))
+      const sorted = allEvents.flat().sort((a, b) => new Date(a.start) - new Date(b.start))
+      setEvents(sorted)
+      if (sorted.length) persistCalEvents(sorted, 'apple')
     } catch (e) {
       setError(e.message)
     } finally {

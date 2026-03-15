@@ -192,6 +192,18 @@ export default function JarvisTab() {
 
   useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
 
+  // Keep localStorage in sync so voice.js can read recent conversation via blob
+  useEffect(() => {
+    const saveable = messages.filter(m => m.id !== 'welcome' && m.role && m.content)
+    if (!saveable.length) return
+    try {
+      localStorage.setItem(
+        'jarvis_recent_conv',
+        JSON.stringify(saveable.slice(-20).map(m => ({ role: m.role, content: m.content })))
+      )
+    } catch { /* ignore */ }
+  }, [messages])
+
   // Load prior conversation context when Drive connects
   useEffect(() => {
     if (!drive.isSignedIn) return

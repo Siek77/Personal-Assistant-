@@ -58,6 +58,8 @@ function SyncAutoManager() {
           settings,
           esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
           memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
+          recentConv: JSON.parse(localStorage.getItem('jarvis_recent_conv') || '[]'),
+          calendarEvents: JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]'),
         }
         const res = await fetch(`/api/sync?key=${key}`, {
           method: 'POST',
