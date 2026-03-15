@@ -390,37 +390,162 @@ function UptimeWidget({ uptimeUrlsJson }) {
   )
 }
 
-// ── NotionWidget ───────────────────────────────────────────────────────────────
-function NotionWidget({ apiKey, databaseId }) {
+// ── NotionWidget — sm/md/lg size-adaptive ──────────────────────────────────────
+function NotionWidget({ apiKey, databaseId, w = 380, label }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [dbName, setDbName] = useState('')
+  const [statusFilter, setStatusFilter] = useState('All')
+
+  const size = w < 300 ? 'sm' : w < 500 ? 'md' : 'lg'
+
   const fetchItems = async () => {
-    if (!apiKey || !databaseId) return; setLoading(true); setError(null)
+    if (!apiKey || !databaseId) return
+    setLoading(true); setError(null)
     try {
-      const meta = await (await fetch('/api/notion', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Notion-Key': apiKey }, body: JSON.stringify({ action: 'get_database', databaseId }) })).json()
+      const meta = await (await fetch('/api/notion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Notion-Key': apiKey },
+        body: JSON.stringify({ action: 'get_database', databaseId }),
+      })).json()
       if (meta.title) setDbName(meta.title?.[0]?.plain_text || '')
-      const r = await fetch('/api/notion', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Notion-Key': apiKey }, body: JSON.stringify({ action: 'query', databaseId, page_size: 10 }) })
-      const data = await r.json(); if (!r.ok) throw new Error(data.message || 'Failed'); setItems(data.results || [])
+      const r = await fetch('/api/notion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Notion-Key': apiKey },
+        body: JSON.stringify({ action: 'query', databaseId, page_size: size === 'lg' ? 20 : 10 }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.message || 'Failed')
+      setItems(data.results || [])
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
+
   useEffect(() => { fetchItems() }, [apiKey, databaseId])
-  const getTitle = p => { for (const [, prop] of Object.entries(p.properties || {})) { if (prop.type === 'title' && prop.title?.[0]?.plain_text) return prop.title[0].plain_text } return 'Untitled' }
-  const getStatus = p => { for (const [, prop] of Object.entries(p.properties || {})) { if (prop.type === 'status') return prop.status?.name || ''; if (prop.type === 'select') return prop.select?.name || ''; if (prop.type === 'checkbox') return prop.checkbox ? '✓' : '' } return '' }
+
+  const displayLabel = label || dbName || 'Notion'
+
+  const getTitle = p => {
+    for (const [, prop] of Object.entries(p.properties || {})) {
+      if (prop.type === 'title' && prop.title?.[0]?.plain_text) return prop.title[0].plain_text
+    }
+    return 'Untitled'
+  }
+  const getStatus = p => {
+    for (const [, prop] of Object.entries(p.properties || {})) {
+      if (prop.type === 'status') return prop.status?.name || ''
+      if (prop.type === 'select') return prop.select?.name || ''
+      if (prop.type === 'checkbox') return prop.checkbox ? '✓' : ''
+    }
+    return ''
+  }
+  const getDate = p => {
+    for (const [, prop] of Object.entries(p.properties || {})) {
+      if (prop.type === 'date' && prop.date?.start) {
+        return new Date(prop.date.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      }
+    }
+    return ''
+  }
+
   if (!apiKey || !databaseId) return (
-    <div className="widget"><div className="widget-header"><span>📝</span> Notion</div><div style={{ fontSize: 12, color: 'var(--text2)' }}>Add Notion API key and Database ID in Settings → Notion.</div></div>
+    <div className="widget">
+      <div className="widget-header"><span>📝</span> {displayLabel}</div>
+      <div style={{ fontSize: 12, color: 'var(--text2)' }}>Add Notion API key and Database ID in Settings → Notion.</div>
+    </div>
   )
+
+  const headerRow = (
+    <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>📝</span> {displayLabel}</div>
+      <button className="btn btn-ghost btn-sm" onClick={fetchItems}>{loading ? '...' : '⟳'}</button>
+    </div>
+  )
+
+  // ── sm: count + 3 preview items ──
+  if (size === 'sm') {
+    return (
+      <div className="widget">
+        {headerRow}
+        {loading && !items.length && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading…</div>}
+        {error && <div style={{ fontSize: 12, color: '#ef4444' }}>⚠️ {error}</div>}
+        {!loading && !error && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, margin: '8px 0 10px' }}>
+              <span style={{ fontSize: 28, fontWeight: 700, color: 'var(--blue)', fontFamily: 'Orbitron, monospace', lineHeight: 1 }}>{items.length}</span>
+              <span style={{ fontSize: 11, color: 'var(--text2)' }}>items</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {items.slice(0, 3).map(item => (
+                <div key={item.id} style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  · {getTitle(item)}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ── lg: filter tabs + full table ──
+  if (size === 'lg') {
+    const allStatuses = ['All', ...new Set(items.map(getStatus).filter(Boolean))]
+    const filtered = statusFilter === 'All' ? items : items.filter(item => getStatus(item) === statusFilter)
+    return (
+      <div className="widget">
+        {headerRow}
+        {loading && !items.length && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading…</div>}
+        {error && <div style={{ fontSize: 12, color: '#ef4444' }}>⚠️ {error}</div>}
+        {items.length > 0 && (
+          <>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
+              {allStatuses.map(s => (
+                <button key={s} onClick={() => setStatusFilter(s)} style={{ padding: '3px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: statusFilter === s ? 'var(--blue)' : 'var(--bg3)', color: statusFilter === s ? '#fff' : 'var(--text2)', transition: 'all 0.15s' }}>{s}</button>
+              ))}
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Title</th>
+                    <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Status</th>
+                    <th style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text2)', fontWeight: 600, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.slice(0, 15).map(item => {
+                    const status = getStatus(item)
+                    const date = getDate(item)
+                    return (
+                      <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '6px 8px', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getTitle(item)}</td>
+                        <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                          {status && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--text3)', border: '1px solid var(--border)' }}>{status}</span>}
+                        </td>
+                        <td style={{ padding: '6px 8px', color: 'var(--text2)', whiteSpace: 'nowrap', fontSize: 11 }}>{date}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {filtered.length > 15 && <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 6, textAlign: 'right' }}>+{filtered.length - 15} more</div>}
+          </>
+        )}
+        {!items.length && !loading && !error && <div style={{ fontSize: 12, color: 'var(--text2)' }}>No items found.</div>}
+      </div>
+    )
+  }
+
+  // ── md: standard badge list ──
   return (
     <div className="widget">
-      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>📝</span> {dbName || 'Notion'}</div>
-        <button className="btn btn-ghost btn-sm" onClick={fetchItems}>{loading ? '...' : '⟳'}</button>
-      </div>
+      {headerRow}
       {loading && !items.length && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading…</div>}
       {error && <div style={{ fontSize: 12, color: '#ef4444' }}>⚠️ {error}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {items.map(item => { const status = getStatus(item); return (
+        {items.slice(0, 8).map(item => { const status = getStatus(item); return (
           <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}>
             <span style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getTitle(item)}</span>
             {status && <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--text2)', flexShrink: 0 }}>{status}</span>}
@@ -474,6 +599,13 @@ function AddWidgetPanel({ layout, customWidgets, onClose, onAdd, onCreate, onDel
     padding: '10px 12px', background: 'var(--bg3)', borderRadius: 8,
     marginBottom: 6, border: '1px solid var(--border)', cursor: 'pointer',
     transition: 'border-color 0.15s',
+  }
+
+  const placeholderFor = type => {
+    if (type === 'note') return 'Enter your note text…'
+    if (type === 'link') return 'https://example.com'
+    if (type === 'notion') return 'Paste Notion Database ID'
+    return ''
   }
 
   return (
@@ -540,10 +672,11 @@ function AddWidgetPanel({ layout, customWidgets, onClose, onAdd, onCreate, onDel
               <select className="input" value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value, content: '' }))}>
                 <option value="note">📝 Note — display text</option>
                 <option value="link">🔗 Link — clickable URL card</option>
+                <option value="notion">📓 Notion Database — live database view</option>
               </select>
               <textarea className="input" style={{ resize: 'vertical', minHeight: 72 }}
                 value={form.content} onChange={e => setForm(f => ({ ...f, content: e.target.value }))}
-                placeholder={form.type === 'note' ? 'Enter your note text…' : 'https://example.com'}
+                placeholder={placeholderFor(form.type)}
               />
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => { if (form.title.trim()) { onCreate(form); setForm({ title: '', icon: '📌', type: 'note', content: '' }); setShowForm(false) } }} disabled={!form.title.trim()}>Create</button>
@@ -576,82 +709,39 @@ export default function DashboardTab() {
   const { settings, updateSetting } = useSettings()
   const [editMode, setEditMode] = useState(false)
   const [showAddPanel, setShowAddPanel] = useState(false)
+
+  // Drag state
   const [draggingId, setDraggingId] = useState(null)
   const [liveOffset, setLiveOffset] = useState({ x: 0, y: 0 })
+  const draggingDataRef = useRef(null)  // { id, startX, startY, origX, origY }
+  const liveOffsetRef   = useRef({ x: 0, y: 0 })
 
-  // Refs for stable window event handlers
-  const dragRef       = useRef(null)  // {id, startX, startY, origX, origY, started}
-  const liveOffRef    = useRef({ x: 0, y: 0 })
-  const layoutRef     = useRef([])
-  const updateSetRef  = useRef(updateSetting)
-  updateSetRef.current = updateSetting
+  // Resize state
+  const [resizingId, setResizingId] = useState(null)
+  const [resizeW, setResizeW] = useState(null)
+  const resizingDataRef = useRef(null) // { id, startX, origW }
+  const resizeWRef      = useRef(null)
 
   // Custom widgets
   const customWidgets = (() => { try { return JSON.parse(settings.customWidgets || '[]') } catch { return [] } })()
 
-  // Layout — visible widgets with absolute positions
+  // Layout — validate saved data has numeric coords (old format was {id, visible})
   const layout = (() => {
     try {
       const saved = settings.dashboardLayout ? JSON.parse(settings.dashboardLayout) : null
-      if (saved && Array.isArray(saved)) return saved
+      if (
+        saved && Array.isArray(saved) && saved.length > 0 &&
+        typeof saved[0].x === 'number' && typeof saved[0].y === 'number'
+      ) return saved
     } catch {}
     const canvasW = window.innerWidth - (window.innerWidth >= 640 ? 280 : 24)
     return getDefaultLayout(canvasW)
   })()
-  layoutRef.current = layout
 
-  // Attach global pointer/mouse/touch listeners once
-  useEffect(() => {
-    const getXY = e => ({ x: e.clientX ?? e.touches?.[0]?.clientX ?? 0, y: e.clientY ?? e.touches?.[0]?.clientY ?? 0 })
-
-    const onMove = e => {
-      if (!dragRef.current) return
-      const { x, y } = getXY(e)
-      const dx = x - dragRef.current.startX
-      const dy = y - dragRef.current.startY
-      if (!dragRef.current.started) {
-        if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return
-        dragRef.current.started = true
-        setDraggingId(dragRef.current.id)
-      }
-      liveOffRef.current = { x: dx, y: dy }
-      setLiveOffset({ x: dx, y: dy })
-      e.preventDefault()
-    }
-
-    const onUp = e => {
-      if (!dragRef.current) return
-      if (dragRef.current.started) {
-        const { id, origX, origY } = dragRef.current
-        const { x: dx, y: dy } = liveOffRef.current
-        const newLayout = layoutRef.current.map(w => w.id === id ? { ...w, x: Math.max(0, origX + dx), y: Math.max(0, origY + dy) } : w)
-        updateSetRef.current('dashboardLayout', JSON.stringify(newLayout))
-      }
-      dragRef.current = null
-      liveOffRef.current = { x: 0, y: 0 }
-      setDraggingId(null)
-      setLiveOffset({ x: 0, y: 0 })
-    }
-
-    window.addEventListener('pointermove', onMove, { passive: false })
-    window.addEventListener('pointerup',   onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup',   onUp)
-    }
-  }, [])
-
-  const startDrag = (e, id) => {
-    const widget = layoutRef.current.find(w => w.id === id)
-    if (!widget) return
-    dragRef.current = { id, startX: e.clientX, startY: e.clientY, origX: widget.x, origY: widget.y, started: false }
-    e.stopPropagation()
-  }
-
-  const saveLayout      = nl => updateSetting('dashboardLayout', JSON.stringify(nl))
+  const saveLayout       = nl  => updateSetting('dashboardLayout', JSON.stringify(nl))
   const saveCustomWidgets = cws => updateSetting('customWidgets', JSON.stringify(cws))
 
-  const removeFromCanvas = id  => saveLayout(layout.filter(w => w.id !== id))
+  const removeFromCanvas = id => saveLayout(layout.filter(w => w.id !== id))
 
   const addToCanvas = id => {
     const canvasW = window.innerWidth - (window.innerWidth >= 640 ? 280 : 24)
@@ -683,9 +773,12 @@ export default function DashboardTab() {
     alert(`JARVIS prompt ready: "${prompt.slice(0, 50)}…" — switch to the JARVIS tab!`)
   }
 
-  const renderWidget = id => {
+  const renderWidget = (id, widgetW) => {
     const cw = customWidgets.find(c => c.id === id)
-    if (cw) return <CustomWidget config={cw} />
+    if (cw) {
+      if (cw.type === 'notion') return <NotionWidget apiKey={settings.notionApiKey} databaseId={cw.content} w={widgetW} label={cw.title} />
+      return <CustomWidget config={cw} />
+    }
     switch (id) {
       case 'clock':        return <ClockWidget />
       case 'system':       return <SystemStatsWidget />
@@ -694,13 +787,20 @@ export default function DashboardTab() {
       case 'quickactions': return <QuickActionsWidget onJarvisPrompt={handleJarvisAction} />
       case 'esp32':        return <ESP32SensorWidget />
       case 'uptime':       return <UptimeWidget uptimeUrlsJson={settings.uptimeUrls} />
-      case 'notion':       return <NotionWidget apiKey={settings.notionApiKey} databaseId={settings.notionDatabaseId} />
+      case 'notion':       return <NotionWidget apiKey={settings.notionApiKey} databaseId={settings.notionDatabaseId} w={widgetW} />
       case 'news':         return <NewsWidget apiKey={settings.newsApiKey} />
       default:             return null
     }
   }
 
   const canvasH = layout.length ? Math.max(700, Math.max(...layout.map(w => w.y)) + 450) : 700
+
+  // Shared edit-overlay button style
+  const overlayBtn = (extra = {}) => ({
+    padding: '4px 9px', background: 'rgba(8,11,18,0.8)', border: '1px solid rgba(255,255,255,0.09)',
+    borderRadius: 6, cursor: 'pointer', fontSize: 11, color: 'var(--text2)',
+    backdropFilter: 'blur(6px)', pointerEvents: 'all', ...extra,
+  })
 
   return (
     <div style={{ position: 'relative' }}>
@@ -721,14 +821,16 @@ export default function DashboardTab() {
 
       {editMode && (
         <div style={{ marginBottom: 12, padding: '8px 14px', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
-          Grab <strong>⣿</strong> on a widget to drag · <strong>✕</strong> to hide · <strong>+ Add Widget</strong> to restore hidden or create custom
+          Grab <strong>⣿</strong> to drag · drag <strong>◢</strong> corner to resize · <strong>S/M/L</strong> size presets · <strong>✕</strong> to hide
         </div>
       )}
 
       {/* Freeform canvas */}
       <div style={{ position: 'relative', width: '100%', height: canvasH }}>
         {layout.map(widget => {
-          const isDragging = draggingId === widget.id
+          const isDragging  = draggingId === widget.id
+          const isResizing  = resizingId === widget.id
+          const effectiveW  = isResizing && resizeW !== null ? resizeW : widget.w
           const left = isDragging ? Math.max(0, widget.x + liveOffset.x) : widget.x
           const top  = isDragging ? Math.max(0, widget.y + liveOffset.y) : widget.y
 
@@ -736,33 +838,95 @@ export default function DashboardTab() {
             <div
               key={widget.id}
               style={{
-                position: 'absolute', left, top, width: widget.w,
-                zIndex: isDragging ? 200 : 1,
-                transition: isDragging ? 'none' : 'box-shadow 0.2s',
-                boxShadow: isDragging ? '0 24px 60px rgba(0,0,0,0.55), 0 0 0 2px var(--blue)' : 'none',
+                position: 'absolute', left, top, width: effectiveW,
+                zIndex: isDragging ? 200 : isResizing ? 150 : 1,
+                transition: isDragging || isResizing ? 'none' : 'box-shadow 0.2s',
+                boxShadow: isDragging ? '0 24px 60px rgba(0,0,0,0.55), 0 0 0 2px var(--blue)' : isResizing ? '0 0 0 2px var(--purple)' : 'none',
                 userSelect: 'none', WebkitUserSelect: 'none',
               }}
             >
-              {/* Edit-mode overlay controls */}
+              {/* Edit-mode overlay */}
               {editMode && (
-                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 44, borderRadius: '12px 12px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 10px', zIndex: 30, pointerEvents: 'none' }}>
-                  {/* Drag handle */}
+                <>
+                  {/* Top bar: drag handle (left) + size presets + hide (right) */}
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 44, borderRadius: '12px 12px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', zIndex: 30, pointerEvents: 'none' }}>
+                    {/* Drag handle with pointer capture */}
+                    <div
+                      style={{ ...overlayBtn({ cursor: isDragging ? 'grabbing' : 'grab', fontSize: 14, touchAction: 'none' }) }}
+                      title="Drag to move"
+                      onPointerDown={e => {
+                        e.preventDefault()
+                        e.currentTarget.setPointerCapture(e.pointerId)
+                        draggingDataRef.current = { id: widget.id, startX: e.clientX, startY: e.clientY, origX: widget.x, origY: widget.y }
+                        setDraggingId(widget.id)
+                      }}
+                      onPointerMove={e => {
+                        if (!draggingDataRef.current || draggingDataRef.current.id !== widget.id) return
+                        const dx = e.clientX - draggingDataRef.current.startX
+                        const dy = e.clientY - draggingDataRef.current.startY
+                        liveOffsetRef.current = { x: dx, y: dy }
+                        setLiveOffset({ x: dx, y: dy })
+                      }}
+                      onPointerUp={e => {
+                        if (!draggingDataRef.current || draggingDataRef.current.id !== widget.id) return
+                        const { origX, origY } = draggingDataRef.current
+                        const { x: dx, y: dy } = liveOffsetRef.current
+                        saveLayout(layout.map(w => w.id === widget.id ? { ...w, x: Math.max(0, origX + dx), y: Math.max(0, origY + dy) } : w))
+                        draggingDataRef.current = null
+                        liveOffsetRef.current = { x: 0, y: 0 }
+                        setDraggingId(null)
+                        setLiveOffset({ x: 0, y: 0 })
+                      }}
+                    >⣿</div>
+
+                    {/* Right side: S/M/L presets + hide */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3, pointerEvents: 'all' }}>
+                      {[['S', 240], ['M', 380], ['L', 560]].map(([lbl, preset]) => (
+                        <button key={lbl} style={{ ...overlayBtn({ fontWeight: effectiveW === preset ? 700 : 400, color: effectiveW === preset ? 'var(--blue)' : 'var(--text2)' }) }}
+                          onClick={() => saveLayout(layout.map(w => w.id === widget.id ? { ...w, w: preset } : w))}
+                        >{lbl}</button>
+                      ))}
+                      <button style={{ ...overlayBtn({ color: 'var(--red)', marginLeft: 2 }) }}
+                        onPointerDown={e => e.stopPropagation()}
+                        onClick={() => removeFromCanvas(widget.id)}
+                        title="Hide widget"
+                      >✕</button>
+                    </div>
+                  </div>
+
+                  {/* Resize handle — bottom-right corner */}
                   <div
-                    style={{ padding: '5px 9px', background: 'rgba(8,11,18,0.75)', borderRadius: 7, cursor: isDragging ? 'grabbing' : 'grab', color: 'var(--text2)', fontSize: 14, pointerEvents: 'all', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)' }}
-                    onPointerDown={e => { e.preventDefault(); startDrag(e, widget.id) }}
-                    title="Drag to move"
-                  >⣿</div>
-                  {/* Hide button */}
-                  <button
-                    style={{ padding: '5px 10px', background: 'rgba(8,11,18,0.75)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, cursor: 'pointer', color: 'var(--text2)', fontSize: 12, pointerEvents: 'all', backdropFilter: 'blur(6px)' }}
-                    onPointerDown={e => e.stopPropagation()}
-                    onClick={() => removeFromCanvas(widget.id)}
-                    title="Hide widget"
-                  >✕ hide</button>
-                </div>
+                    style={{ position: 'absolute', bottom: 5, right: 5, width: 16, height: 16, cursor: 'se-resize', zIndex: 31, touchAction: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text2)', background: 'rgba(8,11,18,0.75)', borderRadius: 4, border: '1px solid rgba(255,255,255,0.09)' }}
+                    title="Drag to resize"
+                    onPointerDown={e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      e.currentTarget.setPointerCapture(e.pointerId)
+                      resizingDataRef.current = { id: widget.id, startX: e.clientX, origW: widget.w }
+                      resizeWRef.current = widget.w
+                      setResizingId(widget.id)
+                      setResizeW(widget.w)
+                    }}
+                    onPointerMove={e => {
+                      if (!resizingDataRef.current || resizingDataRef.current.id !== widget.id) return
+                      const nw = Math.max(200, resizingDataRef.current.origW + (e.clientX - resizingDataRef.current.startX))
+                      resizeWRef.current = nw
+                      setResizeW(nw)
+                    }}
+                    onPointerUp={e => {
+                      if (!resizingDataRef.current || resizingDataRef.current.id !== widget.id) return
+                      const finalW = resizeWRef.current ?? widget.w
+                      saveLayout(layout.map(w => w.id === widget.id ? { ...w, w: finalW } : w))
+                      resizingDataRef.current = null
+                      resizeWRef.current = null
+                      setResizingId(null)
+                      setResizeW(null)
+                    }}
+                  >◢</div>
+                </>
               )}
 
-              {renderWidget(widget.id)}
+              {renderWidget(widget.id, effectiveW)}
             </div>
           )
         })}
