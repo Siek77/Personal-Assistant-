@@ -52,14 +52,37 @@ export default async function handler(req, res) {
   const groqKey = process.env.GROQ_API_KEY
   if (!groqKey) return res.status(500).json({ error: 'GROQ_API_KEY not configured' })
 
-  // ── Load synced data from Vercel Blob (same source as the JARVIS site) ──
+  // ── Helper: fetch HA states with a 3s timeout ──
+  async function fetchHaStates(url, token) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 3000)
+    try {
+      const r = await fetch(`${url}/api/states`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      })
+      return r.ok ? r.json() : null
+    } catch {
+      return null
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  // ── Kick off blob fetch and (if env HA creds exist) HA fetch in parallel ──
+  const envHaUrl   = (process.env.HA_URL   || '').replace(/\/$/, '')
+  const envHaToken =  process.env.HA_TOKEN  || ''
+  const earlyHaPromise = (envHaUrl && envHaToken)
+    ? fetchHaStates(envHaUrl, envHaToken)
+    : null
+
   const synced = await fetchSyncedData(process.env.SYNC_KEY)
   const syncedSettings = synced?.settings || {}
   const syncedMemory  = synced?.memory  || {}
 
   // Prefer synced settings; fall back to env vars
-  const haUrl    = ((syncedSettings.haUrl   || process.env.HA_URL   || '').replace(/\/$/, ''))
-  const haToken  =  (syncedSettings.haToken || process.env.HA_TOKEN || '')
+  const haUrl    = ((syncedSettings.haUrl   || envHaUrl  ).replace(/\/$/, ''))
+  const haToken  =  (syncedSettings.haToken || envHaToken)
   const haEnabled = !!(haUrl && haToken)
   const userName  =  (syncedSettings.userName || process.env.USER_NAME || 'Boss')
 
@@ -86,15 +109,14 @@ export default async function handler(req, res) {
     ? (process.env.USER_FACTS || '').split(',').map(f => f.trim()).filter(Boolean).map(f => `- ${f}`).join('\n')
     : ''
 
-  // ── Fetch live HA entity states ──
+  // ── Fetch live HA entity states (reuse early fetch if available) ──
   let entitySummary = ''
   if (haEnabled) {
     try {
-      const r = await fetch(`${haUrl}/api/states`, {
-        headers: { Authorization: `Bearer ${haToken}` },
-      })
-      if (r.ok) {
-        const states = await r.json()
+      // If creds match env vars we already started this fetch in parallel; otherwise start now
+      const useEarly = earlyHaPromise && haUrl === envHaUrl && haToken === envHaToken
+      const states = await (useEarly ? earlyHaPromise : fetchHaStates(haUrl, haToken))
+      if (states) {
         const DOMAINS = ['light', 'switch', 'climate', 'media_player', 'sensor', 'binary_sensor', 'lock', 'cover', 'fan', 'input_boolean']
         const lines = states
           .filter(e => DOMAINS.some(d => e.entity_id.startsWith(d + '.')))
