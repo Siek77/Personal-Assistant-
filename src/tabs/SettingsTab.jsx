@@ -549,23 +549,75 @@ export default function SettingsTab() {
                   value={settings.scanlineEffect !== false}
                   onChange={v => save('scanlineEffect', v)}
                 />
+                {/* Primary Color */}
                 <div className="settings-row">
                   <div>
-                    <div className="settings-label">Color Accent</div>
-                    <div className="settings-desc">Primary interface color (requires refresh)</div>
+                    <div className="settings-label">Primary Color</div>
+                    <div className="settings-desc">Main accent — buttons, active states, links</div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {['#3b82f6', '#06b6d4', '#10b981', '#8b5cf6', '#f97316'].map(c => (
-                      <div
-                        key={c}
-                        style={{
-                          width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                          border: settings.accentColor === c ? '2px solid white' : '2px solid transparent',
-                          boxShadow: settings.accentColor === c ? `0 0 8px ${c}` : 'none',
-                        }}
-                        onClick={() => save('accentColor', c)}
-                      />
-                    ))}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: '50%',
+                      background: settings.primaryColor || '#3b82f6',
+                      border: '2px solid var(--border2)',
+                      boxShadow: `0 0 10px ${settings.primaryColor || '#3b82f6'}66`,
+                      flexShrink: 0,
+                    }} />
+                    <input
+                      type="color"
+                      value={settings.primaryColor || '#3b82f6'}
+                      onChange={e => save('primaryColor', e.target.value)}
+                      style={{
+                        width: 44, height: 34, border: '1px solid var(--border)',
+                        borderRadius: 8, cursor: 'pointer', background: 'var(--bg3)',
+                        padding: 2,
+                      }}
+                      title="Pick primary color"
+                    />
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => save('primaryColor', '#3b82f6')}
+                      title="Reset to default"
+                      style={{ fontSize: 11 }}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                {/* Secondary Color */}
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-label">Secondary Color</div>
+                    <div className="settings-desc">Secondary accent — memory, dashboard highlights</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: '50%',
+                      background: settings.secondaryColor || '#8b5cf6',
+                      border: '2px solid var(--border2)',
+                      boxShadow: `0 0 10px ${settings.secondaryColor || '#8b5cf6'}66`,
+                      flexShrink: 0,
+                    }} />
+                    <input
+                      type="color"
+                      value={settings.secondaryColor || '#8b5cf6'}
+                      onChange={e => save('secondaryColor', e.target.value)}
+                      style={{
+                        width: 44, height: 34, border: '1px solid var(--border)',
+                        borderRadius: 8, cursor: 'pointer', background: 'var(--bg3)',
+                        padding: 2,
+                      }}
+                      title="Pick secondary color"
+                    />
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => save('secondaryColor', '#8b5cf6')}
+                      title="Reset to default"
+                      style={{ fontSize: 11 }}
+                    >
+                      Reset
+                    </button>
                   </div>
                 </div>
               </div>

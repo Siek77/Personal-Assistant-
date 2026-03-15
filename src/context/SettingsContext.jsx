@@ -21,6 +21,11 @@ const DEFAULTS = {
   voiceEnabled: false,
   scanlineEffect: true,
   theme: 'dark',
+  // Theme colors
+  primaryColor: '#3b82f6',
+  secondaryColor: '#8b5cf6',
+  // Dashboard layout — JSON string of [{id, visible}] or null for default
+  dashboardLayout: null,
   // Home Assistant / HomeKit / Matter
   haUrl: '',
   haToken: '',
@@ -34,6 +39,19 @@ const DEFAULTS = {
   uptimeUrls: '[]',
 }
 
+// Convert #rrggbb to "r,g,b"
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16)
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`
+}
+
+function applyThemeColors(primary, secondary) {
+  const root = document.documentElement
+  root.style.setProperty('--blue', primary)
+  root.style.setProperty('--blue-glow', `rgba(${hexToRgb(primary)},0.25)`)
+  root.style.setProperty('--purple', secondary)
+}
+
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState(() => {
     try {
@@ -43,6 +61,14 @@ export function SettingsProvider({ children }) {
       return DEFAULTS
     }
   })
+
+  // Apply theme colors whenever primary/secondary change
+  useEffect(() => {
+    applyThemeColors(
+      settings.primaryColor || DEFAULTS.primaryColor,
+      settings.secondaryColor || DEFAULTS.secondaryColor
+    )
+  }, [settings.primaryColor, settings.secondaryColor])
 
   const updateSetting = (key, value) => {
     setSettings(prev => {

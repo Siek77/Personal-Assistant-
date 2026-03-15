@@ -42,21 +42,46 @@ const WEATHER_LAT = 41.1836
 const WEATHER_LON = -89.0651
 const WEATHER_LABEL = 'Lostant, IL'
 
+// ── Widget catalog ─────────────────────────────────────────────────────────────
+const WIDGET_CATALOG = {
+  clock:        { label: 'Clock',          icon: '🕐', wide: false },
+  system:       { label: 'System Stats',   icon: '💻', wide: false },
+  memory:       { label: 'JARVIS Memory',  icon: '🧠', wide: false },
+  weather:      { label: 'Weather',        icon: '🌤️', wide: true  },
+  quickactions: { label: 'Quick Actions',  icon: '⚡', wide: true  },
+  esp32:        { label: 'ESP32 Sensors',  icon: '📡', wide: true  },
+  uptime:       { label: 'Uptime Monitor', icon: '🟢', wide: true  },
+  notion:       { label: 'Notion',         icon: '📝', wide: true  },
+  news:         { label: 'Headlines',      icon: '📰', wide: true  },
+}
+const DEFAULT_LAYOUT = Object.keys(WIDGET_CATALOG).map(id => ({ id, visible: true }))
+
+// ── Weather Widget ─────────────────────────────────────────────────────────────
+
 function WeatherWidget() {
   const [weather, setWeather] = useState(null)
+  const [forecastData, setForecastData] = useState(null)
+  const [alerts, setAlerts] = useState(null) // null = not loaded yet
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [expanded, setExpanded] = useState(false)
+  const [tab, setTab] = useState('forecast')
 
   const fetchWeather = async () => {
     setLoading(true)
     setError(null)
     try {
       const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}` +
-        `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&temperature_unit=fahrenheit&wind_speed_unit=mph`
+        `https://api.open-meteo.com/v1/forecast` +
+        `?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}` +
+        `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code` +
+        `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code` +
+        `&hourly=temperature_2m,weather_code&forecast_days=2` +
+        `&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=America%2FChicago`
       )
       const data = await res.json()
       setWeather(data.current)
+      setForecastData(data)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -64,16 +89,76 @@ function WeatherWidget() {
     }
   }
 
+  const fetchAlerts = async () => {
+    try {
+      const r = await fetch(
+        `https://api.weather.gov/alerts/active?point=${WEATHER_LAT},${WEATHER_LON}`,
+        { headers: { 'Accept': 'application/geo+json' } }
+      )
+      if (r.ok) {
+        const data = await r.json()
+        setAlerts(data.features || [])
+      } else {
+        setAlerts([])
+      }
+    } catch {
+      setAlerts([])
+    }
+  }
+
   useEffect(() => { fetchWeather() }, [])
 
+  useEffect(() => {
+    if (expanded && alerts === null) fetchAlerts()
+  }, [expanded])
+
+  // Next 12 hours from now
+  const hourlySlice = (() => {
+    if (!forecastData?.hourly) return []
+    const now = new Date()
+    const times = forecastData.hourly.time
+    let startIdx = 0
+    for (let i = 0; i < times.length; i++) {
+      if (new Date(times[i]) >= now) { startIdx = i; break }
+    }
+    return times.slice(startIdx, startIdx + 12).map((t, i) => ({
+      time: new Date(t),
+      temp: forecastData.hourly.temperature_2m[startIdx + i],
+      code: forecastData.hourly.weather_code[startIdx + i],
+    }))
+  })()
+
+  const alertCount = alerts ? alerts.length : 0
+
   return (
-    <div className="widget widget-wide">
-      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>🌤️</span> Weather — {WEATHER_LABEL}</div>
-        <button className="btn btn-ghost btn-sm" onClick={fetchWeather}>{loading ? '...' : '⟳'}</button>
+    <div className="widget">
+      {/* Header */}
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: weather ? 12 : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>🌤️</span> Weather — {WEATHER_LABEL}
+          {alertCount > 0 && (
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(239,68,68,0.15)', color: '#ef4444', fontWeight: 700 }}>
+              ⚠️ {alertCount}
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button className="btn btn-ghost btn-sm" onClick={fetchWeather} title="Refresh">{loading ? '...' : '⟳'}</button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setExpanded(e => !e)}
+            title={expanded ? 'Collapse' : 'Expand forecast'}
+            style={{ fontSize: 10 }}
+          >
+            {expanded ? '▲' : '▼ Forecast'}
+          </button>
+        </div>
       </div>
+
       {loading && !weather && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading...</div>}
       {error && !loading && <div style={{ fontSize: 12, color: 'var(--red)' }}>⚠️ {error}</div>}
+
+      {/* Current conditions */}
       {weather && (
         <div className="weather-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -88,9 +173,123 @@ function WeatherWidget() {
           </div>
         </div>
       )}
+
+      {/* Expanded panel */}
+      {expanded && (
+        <div style={{ marginTop: 14 }}>
+          {/* Tab bar */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
+            {[
+              { id: 'forecast', label: '7-Day' },
+              { id: 'hourly',   label: 'Hourly' },
+              { id: 'alerts',   label: alertCount > 0 ? `⚠️ Alerts (${alertCount})` : 'Alerts' },
+            ].map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                style={{
+                  padding: '5px 13px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: 12, fontWeight: 500,
+                  background: tab === t.id ? 'var(--blue)' : 'var(--bg3)',
+                  color: tab === t.id ? '#fff' : 'var(--text2)',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* 7-Day Forecast */}
+          {tab === 'forecast' && forecastData?.daily && (
+            <div>
+              {forecastData.daily.time.map((date, i) => (
+                <div key={date} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: i < forecastData.daily.time.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <span style={{ width: 40, fontSize: 12, color: i === 0 ? 'var(--blue)' : 'var(--text2)', flexShrink: 0, fontWeight: i === 0 ? 600 : 400 }}>
+                    {i === 0 ? 'Today' : new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
+                  </span>
+                  <span style={{ fontSize: 20, width: 26, flexShrink: 0 }}>{wmoIcon(forecastData.daily.weather_code[i])}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text3)', flex: 1 }}>{wmoDesc(forecastData.daily.weather_code[i])}</span>
+                  {(forecastData.daily.precipitation_probability_max[i] || 0) > 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--cyan)', marginRight: 4, flexShrink: 0 }}>
+                      💧{forecastData.daily.precipitation_probability_max[i]}%
+                    </span>
+                  )}
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', minWidth: 34, textAlign: 'right', flexShrink: 0 }}>
+                    {Math.round(forecastData.daily.temperature_2m_max[i])}°
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 30, textAlign: 'right', flexShrink: 0 }}>
+                    {Math.round(forecastData.daily.temperature_2m_min[i])}°
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Hourly */}
+          {tab === 'hourly' && (
+            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6 }}>
+              {hourlySlice.length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading hourly data…</div>
+              )}
+              {hourlySlice.map((h, i) => (
+                <div key={i} style={{
+                  textAlign: 'center', minWidth: 54, padding: '10px 6px',
+                  background: i === 0 ? 'rgba(59,130,246,0.1)' : 'var(--bg3)',
+                  borderRadius: 8, flexShrink: 0,
+                  border: i === 0 ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--border)',
+                }}>
+                  <div style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 6 }}>
+                    {i === 0 ? 'Now' : h.time.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })}
+                  </div>
+                  <div style={{ fontSize: 22 }}>{wmoIcon(h.code)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginTop: 6 }}>
+                    {Math.round(h.temp)}°
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Alerts */}
+          {tab === 'alerts' && (
+            <div>
+              {alerts === null && (
+                <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading alerts…</div>
+              )}
+              {alerts !== null && alerts.length === 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8 }}>
+                  <span style={{ fontSize: 18 }}>✅</span>
+                  <span style={{ fontSize: 13, color: 'var(--text2)' }}>No active weather alerts for this area</span>
+                </div>
+              )}
+              {alerts !== null && alerts.map(a => (
+                <div key={a.id} style={{
+                  padding: '10px 14px', background: 'rgba(239,68,68,0.08)',
+                  border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, marginBottom: 8,
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#ef4444', marginBottom: 4 }}>
+                    ⚠️ {a.properties?.event}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
+                    {a.properties?.headline}
+                  </div>
+                  {a.properties?.expires && (
+                    <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 6 }}>
+                      Expires: {new Date(a.properties.expires).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
+
+// ── Clock Widget ───────────────────────────────────────────────────────────────
 
 function ClockWidget() {
   const [time, setTime] = useState(new Date())
@@ -108,6 +307,8 @@ function ClockWidget() {
   )
 }
 
+// ── Quick Actions Widget ───────────────────────────────────────────────────────
+
 function QuickActionsWidget({ onJarvisPrompt }) {
   const actions = [
     { icon: '☀️', label: "Briefing", prompt: "Give me a morning briefing — what should I know and focus on today?" },
@@ -118,7 +319,7 @@ function QuickActionsWidget({ onJarvisPrompt }) {
     { icon: '⚡', label: 'Facts', prompt: "What interesting things do you know about me so far?" },
   ]
   return (
-    <div className="widget widget-wide">
+    <div className="widget">
       <div className="widget-header"><span>⚡</span> Quick JARVIS Actions</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
         {actions.map(a => (
@@ -131,6 +332,8 @@ function QuickActionsWidget({ onJarvisPrompt }) {
     </div>
   )
 }
+
+// ── System Stats Widget ────────────────────────────────────────────────────────
 
 function SystemStatsWidget() {
   const [stats] = useState({
@@ -162,6 +365,8 @@ function SystemStatsWidget() {
   )
 }
 
+// ── News Widget ────────────────────────────────────────────────────────────────
+
 function NewsWidget({ apiKey }) {
   const [news, setNews] = useState(SAMPLE_NEWS)
   const [loading, setLoading] = useState(false)
@@ -186,7 +391,7 @@ function NewsWidget({ apiKey }) {
   useEffect(() => { fetchNews() }, [apiKey])
 
   return (
-    <div className="widget widget-wide">
+    <div className="widget">
       <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>📰</span> Headlines</div>
         <button className="btn btn-ghost btn-sm" onClick={fetchNews}>{loading ? '...' : '⟳'}</button>
@@ -201,6 +406,8 @@ function NewsWidget({ apiKey }) {
     </div>
   )
 }
+
+// ── Memory Stats Widget ────────────────────────────────────────────────────────
 
 function MemoryStatsWidget() {
   const { memory } = useMemory()
@@ -223,10 +430,10 @@ function MemoryStatsWidget() {
   )
 }
 
-// ── ESP32 Sensor Widget ───────────────────────────────────────────────────────
+// ── ESP32 Sensor Widget ────────────────────────────────────────────────────────
 
 function ESP32SensorWidget() {
-  const [sensors, setSensors] = useState([]) // [{device, data, error, loading}]
+  const [sensors, setSensors] = useState([])
   const [fetching, setFetching] = useState(false)
 
   const fetchAllSensors = async () => {
@@ -259,7 +466,7 @@ function ESP32SensorWidget() {
 
   if (sensorDevices.length === 0) {
     return (
-      <div className="widget widget-wide">
+      <div className="widget">
         <div className="widget-header"><span>📡</span> ESP32 Sensors</div>
         <div style={{ fontSize: 12, color: 'var(--text2)' }}>Add sensor-type ESP32 devices in the ESP32 tab to see live readings here.</div>
       </div>
@@ -267,7 +474,7 @@ function ESP32SensorWidget() {
   }
 
   return (
-    <div className="widget widget-wide">
+    <div className="widget">
       <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>📡</span> ESP32 Sensors</div>
         <button className="btn btn-ghost btn-sm" onClick={fetchAllSensors}>{fetching ? '...' : '⟳'}</button>
@@ -295,7 +502,7 @@ function ESP32SensorWidget() {
   )
 }
 
-// ── Uptime Widget ─────────────────────────────────────────────────────────────
+// ── Uptime Widget ──────────────────────────────────────────────────────────────
 
 function UptimeWidget({ uptimeUrlsJson }) {
   const [results, setResults] = useState([])
@@ -326,7 +533,7 @@ function UptimeWidget({ uptimeUrlsJson }) {
 
   if (urls.length === 0) {
     return (
-      <div className="widget widget-wide">
+      <div className="widget">
         <div className="widget-header"><span>🟢</span> Uptime Monitor</div>
         <div style={{ fontSize: 12, color: 'var(--text2)' }}>Add URLs to monitor in Settings → Uptime.</div>
       </div>
@@ -337,7 +544,7 @@ function UptimeWidget({ uptimeUrlsJson }) {
   const anyDown = results.some(r => r.status === 'down')
 
   return (
-    <div className="widget widget-wide">
+    <div className="widget">
       <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>{allUp ? '🟢' : anyDown ? '🔴' : '🟡'}</span> Uptime Monitor
@@ -357,7 +564,6 @@ function UptimeWidget({ uptimeUrlsJson }) {
             </span>
           </div>
         ))}
-        {/* Placeholder rows while loading */}
         {loading && results.length === 0 && urls.map(u => (
           <div key={u.url} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 10 }}>⏳</span>
@@ -374,7 +580,7 @@ function UptimeWidget({ uptimeUrlsJson }) {
   )
 }
 
-// ── Notion Widget ─────────────────────────────────────────────────────────────
+// ── Notion Widget ──────────────────────────────────────────────────────────────
 
 function NotionWidget({ apiKey, databaseId }) {
   const [items, setItems] = useState([])
@@ -387,7 +593,6 @@ function NotionWidget({ apiKey, databaseId }) {
     setLoading(true)
     setError(null)
     try {
-      // Get database metadata
       const metaRes = await fetch('/api/notion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Notion-Key': apiKey },
@@ -396,7 +601,6 @@ function NotionWidget({ apiKey, databaseId }) {
       const meta = await metaRes.json()
       if (meta.title) setDbName(meta.title?.[0]?.plain_text || '')
 
-      // Query items
       const r = await fetch('/api/notion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Notion-Key': apiKey },
@@ -436,7 +640,7 @@ function NotionWidget({ apiKey, databaseId }) {
 
   if (!apiKey || !databaseId) {
     return (
-      <div className="widget widget-wide">
+      <div className="widget">
         <div className="widget-header"><span>📝</span> Notion</div>
         <div style={{ fontSize: 12, color: 'var(--text2)' }}>Add Notion API key and Database ID in Settings → Notion to see your database here.</div>
       </div>
@@ -444,7 +648,7 @@ function NotionWidget({ apiKey, databaseId }) {
   }
 
   return (
-    <div className="widget widget-wide">
+    <div className="widget">
       <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>📝</span> {dbName || 'Notion'}
@@ -477,32 +681,157 @@ function NotionWidget({ apiKey, databaseId }) {
   )
 }
 
-// ── Main Dashboard ────────────────────────────────────────────────────────────
+// ── Main Dashboard ─────────────────────────────────────────────────────────────
 
 export default function DashboardTab() {
-  const { settings } = useSettings()
+  const { settings, updateSetting } = useSettings()
+  const [editMode, setEditMode] = useState(false)
+  const [dragIdx, setDragIdx] = useState(null)
+  const [hoverIdx, setHoverIdx] = useState(null)
+
+  // Compute layout from saved settings, merging in any new widgets
+  const layout = (() => {
+    try {
+      const saved = settings.dashboardLayout ? JSON.parse(settings.dashboardLayout) : null
+      if (saved && Array.isArray(saved)) {
+        const savedIds = new Set(saved.map(w => w.id))
+        const newWidgets = Object.keys(WIDGET_CATALOG)
+          .filter(id => !savedIds.has(id))
+          .map(id => ({ id, visible: true }))
+        return [...saved, ...newWidgets]
+      }
+    } catch {}
+    return DEFAULT_LAYOUT
+  })()
+
+  const saveLayout = (newLayout) => {
+    updateSetting('dashboardLayout', JSON.stringify(newLayout))
+  }
+
+  const handleDrop = (toIdx) => {
+    if (dragIdx === null || dragIdx === toIdx) {
+      setHoverIdx(null)
+      return
+    }
+    const next = [...layout]
+    const [moved] = next.splice(dragIdx, 1)
+    next.splice(toIdx, 0, moved)
+    saveLayout(next)
+    setDragIdx(null)
+    setHoverIdx(null)
+  }
+
+  const toggleWidget = (id) => {
+    saveLayout(layout.map(w => w.id === id ? { ...w, visible: !w.visible } : w))
+  }
 
   const handleJarvisAction = (prompt) => {
     sessionStorage.setItem('jarvis_autoPrompt', prompt)
     alert(`JARVIS prompt ready: "${prompt.slice(0, 50)}…" — switch to the JARVIS tab!`)
   }
 
+  const renderWidget = (id) => {
+    switch (id) {
+      case 'clock':        return <ClockWidget />
+      case 'system':       return <SystemStatsWidget />
+      case 'memory':       return <MemoryStatsWidget />
+      case 'weather':      return <WeatherWidget />
+      case 'quickactions': return <QuickActionsWidget onJarvisPrompt={handleJarvisAction} />
+      case 'esp32':        return <ESP32SensorWidget />
+      case 'uptime':       return <UptimeWidget uptimeUrlsJson={settings.uptimeUrls} />
+      case 'notion':       return <NotionWidget apiKey={settings.notionApiKey} databaseId={settings.notionDatabaseId} />
+      case 'news':         return <NewsWidget apiKey={settings.newsApiKey} />
+      default:             return null
+    }
+  }
+
   return (
     <div className="dashboard-shell">
+      {/* Header */}
       <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--purple)' }}>📊 Dashboard</h2>
         <div style={{ fontSize: 12, color: 'var(--text2)' }}>Command center</div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {editMode && (
+            <button className="btn btn-primary btn-sm" onClick={() => setEditMode(false)}>
+              ✓ Done
+            </button>
+          )}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setEditMode(e => !e)}
+            title="Customize dashboard layout"
+          >
+            {editMode ? '✕ Cancel' : '⚙ Customize'}
+          </button>
+        </div>
       </div>
+
+      {editMode && (
+        <div style={{ marginBottom: 12, padding: '8px 12px', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>⣿</span> Drag widgets to reorder · click <strong>👁</strong> to show/hide
+        </div>
+      )}
+
       <div className="dashboard-grid">
-        <ClockWidget />
-        <SystemStatsWidget />
-        <MemoryStatsWidget />
-        <WeatherWidget />
-        <QuickActionsWidget onJarvisPrompt={handleJarvisAction} />
-        <ESP32SensorWidget />
-        <UptimeWidget uptimeUrlsJson={settings.uptimeUrls} />
-        <NotionWidget apiKey={settings.notionApiKey} databaseId={settings.notionDatabaseId} />
-<NewsWidget apiKey={settings.newsApiKey} />
+        {layout.map(({ id, visible }, idx) => {
+          const cfg = WIDGET_CATALOG[id]
+          if (!cfg) return null
+          if (!visible && !editMode) return null
+
+          const isBeingDragged = hoverIdx === idx && dragIdx !== null && dragIdx !== idx
+
+          return (
+            <div
+              key={id}
+              className={cfg.wide ? 'widget-wide' : ''}
+              draggable={editMode}
+              onDragStart={() => { setDragIdx(idx) }}
+              onDragOver={e => { e.preventDefault(); setHoverIdx(idx) }}
+              onDrop={() => handleDrop(idx)}
+              onDragEnd={() => { setDragIdx(null); setHoverIdx(null) }}
+              style={{
+                position: 'relative',
+                opacity: dragIdx === idx ? 0.35 : (editMode && !visible ? 0.45 : 1),
+                filter: editMode && !visible ? 'grayscale(0.8)' : 'none',
+                outline: isBeingDragged ? '2px dashed var(--blue)' : editMode ? '1px dashed var(--border2)' : 'none',
+                outlineOffset: 2,
+                borderRadius: 12,
+                transition: 'opacity 0.15s, outline 0.1s',
+                cursor: editMode ? 'grab' : 'default',
+              }}
+            >
+              {renderWidget(id)}
+
+              {/* Edit mode overlay controls */}
+              {editMode && (
+                <div style={{
+                  position: 'absolute', top: 10, right: 10,
+                  display: 'flex', gap: 4, zIndex: 20,
+                }}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: '3px 8px', fontSize: 14, lineHeight: 1, background: 'var(--bg2)' }}
+                    onClick={e => { e.stopPropagation(); toggleWidget(id) }}
+                    title={visible ? 'Hide widget' : 'Show widget'}
+                  >
+                    {visible ? '👁' : '🙈'}
+                  </button>
+                  <div
+                    style={{
+                      padding: '3px 8px', background: 'var(--bg2)', border: '1px solid var(--border)',
+                      borderRadius: 6, cursor: 'grab', fontSize: 14, lineHeight: 1,
+                      display: 'flex', alignItems: 'center', color: 'var(--text2)',
+                    }}
+                    title="Drag to reorder"
+                  >
+                    ⣿
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
