@@ -4,10 +4,33 @@
 // Required Vercel env vars:
 //   GROQ_API_KEY   — from console.groq.com
 //   VOICE_SECRET   — any random string, must match Lambda env var
-//   HA_URL         — e.g. http://homeassistant.local:8123 or your Nabu Casa URL
-//   HA_TOKEN       — Home Assistant long-lived access token
-//   USER_NAME      — your first name (e.g. "Tony")
-//   USER_FACTS     — comma-separated facts JARVIS should know (e.g. "works from home, has 2 cats")
+//   SYNC_KEY       — SHA-256 hash of your sync passphrase (64-char hex).
+//                    Copy it from browser console: await crypto.subtle.digest('SHA-256',
+//                    new TextEncoder().encode('jarvis:YOUR_PASSPHRASE'))
+//                    .then(b => [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''))
+//                    When set, voice pulls live memory (facts, routines, preferences) from
+//                    the same blob that the JARVIS site syncs to — no manual USER_FACTS needed.
+//
+// Optional fallback env vars (used when SYNC_KEY is not set):
+//   HA_URL         — e.g. http://homeassistant.local:8123 (otherwise reads from synced settings)
+//   HA_TOKEN       — Home Assistant long-lived access token (otherwise reads from synced settings)
+//   USER_NAME      — your first name (otherwise reads from synced settings)
+//   USER_FACTS     — comma-separated facts (only used if SYNC_KEY not set)
+
+import { list } from '@vercel/blob'
+
+// Fetch synced JARVIS data from Vercel Blob (same store the site pushes to)
+async function fetchSyncedData(syncKey) {
+  if (!syncKey || !/^[a-f0-9]{64}$/.test(syncKey)) return null
+  try {
+    const { blobs } = await list({ prefix: `jarvis-sync/${syncKey}.json` })
+    if (!blobs.length) return null
+    const resp = await fetch(blobs[0].url)
+    return resp.ok ? resp.json() : null
+  } catch {
+    return null
+  }
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -29,14 +52,39 @@ export default async function handler(req, res) {
   const groqKey = process.env.GROQ_API_KEY
   if (!groqKey) return res.status(500).json({ error: 'GROQ_API_KEY not configured' })
 
-  const haUrl = (process.env.HA_URL || '').replace(/\/$/, '')
-  const haToken = process.env.HA_TOKEN
-  const haEnabled = !!(haUrl && haToken)
+  // ── Load synced data from Vercel Blob (same source as the JARVIS site) ──
+  const synced = await fetchSyncedData(process.env.SYNC_KEY)
+  const syncedSettings = synced?.settings || {}
+  const syncedMemory  = synced?.memory  || {}
 
-  const userName = process.env.USER_NAME || 'Boss'
-  const userFacts = (process.env.USER_FACTS || '')
-    .split(',').map(f => f.trim()).filter(Boolean)
-    .map(f => `- ${f}`).join('\n')
+  // Prefer synced settings; fall back to env vars
+  const haUrl    = ((syncedSettings.haUrl   || process.env.HA_URL   || '').replace(/\/$/, ''))
+  const haToken  =  (syncedSettings.haToken || process.env.HA_TOKEN || '')
+  const haEnabled = !!(haUrl && haToken)
+  const userName  =  (syncedSettings.userName || process.env.USER_NAME || 'Boss')
+
+  // ── Build memory context from synced facts / routines / preferences ──
+  const facts = (syncedMemory.facts || [])
+    .slice(0, 30) // cap to avoid token bloat
+    .map(f => `- ${f.text}`)
+    .join('\n')
+
+  const routines = (syncedMemory.routines || [])
+    .slice(0, 10)
+    .map(r => `- ${r.name || r.text || JSON.stringify(r)}`)
+    .join('\n')
+
+  const prefs = syncedMemory.preferences || {}
+  const prefLines = Object.entries(prefs)
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join('\n')
+
+  const recentTopics = (syncedMemory.recentTopics || []).slice(0, 10).join(', ')
+
+  // Fall back to USER_FACTS env var when no sync key is set
+  const envFacts = !synced
+    ? (process.env.USER_FACTS || '').split(',').map(f => f.trim()).filter(Boolean).map(f => `- ${f}`).join('\n')
+    : ''
 
   // ── Fetch live HA entity states ──
   let entitySummary = ''
@@ -62,9 +110,17 @@ export default async function handler(req, res) {
   }
 
   // ── System prompt (voice-optimised — no markdown) ──
+  const memorySection = [
+    facts       ? `Facts about ${userName}:\n${facts}`           : '',
+    routines    ? `${userName}'s routines:\n${routines}`         : '',
+    prefLines   ? `${userName}'s preferences:\n${prefLines}`     : '',
+    recentTopics? `Recent topics discussed: ${recentTopics}`     : '',
+    envFacts    ? `What you know about ${userName}:\n${envFacts}`: '',
+  ].filter(Boolean).join('\n')
+
   const systemPrompt = [
     `You are JARVIS, a highly intelligent personal assistant. Address the user as "${userName}".`,
-    userFacts ? `What you know about ${userName}:\n${userFacts}` : '',
+    memorySection,
     entitySummary,
     `
 STRICT voice rules — you are speaking through Amazon Alexa:
