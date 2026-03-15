@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
+import { useGoogleDrive } from '../hooks/useGoogleDrive'
 
 // ── Provider configs ───────────────────────────────────────────
 const PROVIDERS = {
@@ -86,7 +87,7 @@ Guidelines:
 - Be concise but thorough. Match the user's energy.
 - Proactively surface relevant info based on what you know.
 - Use a slightly formal but warm tone — sophisticated, not generic.
-- Reference previous context when relevant.
+- Reference previous context when relevant. You have full conversation history across sessions.
 - Format with markdown (lists, code blocks) when it helps.`
 }
 
@@ -161,6 +162,13 @@ export default function JarvisTab() {
   const provider = settings.aiProvider || 'groq'
   const cfg = PROVIDERS[provider]
 
+  const drive = useGoogleDrive(settings.googleClientId || null)
+
+  // Stable conversation ID for this session
+  const convIdRef = useRef(String(Date.now()))
+  // Prior session messages (from Drive) included as context but not displayed
+  const priorMessagesRef = useRef([])
+
   const [messages, setMessages] = useState([{
     id: 'welcome', role: 'assistant',
     content: `Systems online. Welcome back${settings.userName ? ', ' + settings.userName : ''}. How can I assist you today?`,
@@ -171,9 +179,42 @@ export default function JarvisTab() {
   const [error, setError] = useState(null)
   const [newFact, setNewFact] = useState('')
   const [showMemory, setShowMemory] = useState(false)
+  const [driveStatus, setDriveStatus] = useState('')
   const messagesEnd = useRef(null)
+  const saveTimerRef = useRef(null)
 
   useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
+
+  // Load prior conversation context when Drive connects
+  useEffect(() => {
+    if (!drive.isSignedIn) return
+    ;(async () => {
+      try {
+        setDriveStatus('Loading history…')
+        const convs = await drive.loadRecentConversations(3)
+        // Flatten last 10 messages from prior sessions (oldest first) as hidden context
+        const prior = convs
+          .reverse()
+          .flatMap(c => (c.messages || []).filter(m => m.id !== 'welcome').slice(-6))
+          .slice(-10)
+        priorMessagesRef.current = prior.map(m => ({ role: m.role, content: m.content }))
+        setDriveStatus(convs.length ? `${convs.length} session${convs.length > 1 ? 's' : ''} loaded` : 'No history yet')
+        setTimeout(() => setDriveStatus(''), 3000)
+      } catch (e) {
+        setDriveStatus('History load failed')
+        setTimeout(() => setDriveStatus(''), 3000)
+      }
+    })()
+  }, [drive.isSignedIn])
+
+  // Debounced save to Drive after each message exchange
+  const scheduleDriveSave = useCallback((msgs) => {
+    if (!drive.isSignedIn) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      drive.saveConversation(convIdRef.current, msgs).catch(() => {})
+    }, 2000)
+  }, [drive.isSignedIn, drive.saveConversation])
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return
@@ -182,7 +223,8 @@ export default function JarvisTab() {
       id: Date.now(), role: 'user', content: input.trim(),
       time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
     }
-    setMessages(prev => [...prev, userMsg])
+    const nextMessages = [...messages, userMsg]
+    setMessages(nextMessages)
     setInput('')
     setError(null)
     setLoading(true)
@@ -190,17 +232,23 @@ export default function JarvisTab() {
 
     try {
       const systemPrompt = buildSystemPrompt(settings, memory)
-      const apiMessages = messages
-        .filter(m => m.id !== 'welcome')
-        .concat(userMsg)
-        .map(m => ({ role: m.role, content: m.content }))
+      // Include prior session messages as context, then current session
+      const apiMessages = [
+        ...priorMessagesRef.current,
+        ...nextMessages
+          .filter(m => m.id !== 'welcome')
+          .map(m => ({ role: m.role, content: m.content })),
+      ]
 
       const reply = await callAI(provider, settings, apiMessages, systemPrompt)
 
-      setMessages(prev => [...prev, {
+      const assistantMsg = {
         id: Date.now() + 1, role: 'assistant', content: reply,
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      }])
+      }
+      const finalMessages = [...nextMessages, assistantMsg]
+      setMessages(finalMessages)
+      scheduleDriveSave(finalMessages)
 
       const words = input.split(' ').filter(w => w.length > 4)
       if (words.length) addTopic(words.slice(0, 3).join(' '))
@@ -255,6 +303,16 @@ export default function JarvisTab() {
             ))}
           </select>
 
+          {settings.googleClientId && (
+            <button
+              className={`btn btn-ghost btn-sm`}
+              onClick={drive.isSignedIn ? undefined : drive.signIn}
+              title={drive.isSignedIn ? driveStatus || 'Drive connected — conversations saving' : 'Connect Google Drive'}
+              style={{ fontSize: 16, opacity: drive.isSignedIn ? 1 : 0.4 }}
+            >
+              {drive.signInStatus === 'signing-in' ? '⏳' : drive.isSignedIn ? '🟢' : '☁️'}
+            </button>
+          )}
           <button className="btn btn-ghost btn-sm memory-toggle-btn" onClick={() => setShowMemory(s => !s)}>
             {showMemory ? '💬' : '🧠'}
           </button>

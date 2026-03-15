@@ -14,6 +14,7 @@ const DEFAULTS = {
   spotifyClientId: '',
   weatherApiKey: '',
   newsApiKey: '',
+  googleClientId: '',
   userName: 'User',
   userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   wakeWord: 'Hey JARVIS',

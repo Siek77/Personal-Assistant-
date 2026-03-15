@@ -500,6 +500,35 @@ export default function SettingsTab() {
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
                   <strong style={{ color: 'var(--text3)' }}>How it works:</strong> Your passphrase is hashed client-side with SHA-256 before being used as a key. The server never sees your passphrase. Settings auto-push 2 seconds after any change (if passphrase is set).
                 </div>
+
+                {/* Google Drive — conversation history */}
+                <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>🗂️ Google Drive — Conversation History</h4>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 14, lineHeight: 1.6 }}>
+                    Saves every JARVIS conversation to your Google Drive (private app folder). On each new session, the last 3 conversations are loaded so JARVIS has full continuity across time and devices.
+                  </p>
+
+                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginBottom: 14 }}>
+                    <div className="settings-label">Google OAuth Client ID</div>
+                    <div className="settings-desc">
+                      Create a project at <strong>console.cloud.google.com</strong> → Enable Drive API → Credentials → OAuth 2.0 Web Client → add <code style={{ fontSize: 11, background: 'var(--bg3)', padding: '1px 4px', borderRadius: 3 }}>https://jarvis-dashboard-fawn.vercel.app</code> as authorized origin → paste Client ID here.
+                    </div>
+                    <input
+                      className="input"
+                      type="text"
+                      placeholder="1234567890-abc...apps.googleusercontent.com"
+                      value={settings.googleClientId || ''}
+                      onChange={e => save('googleClientId', e.target.value)}
+                      style={{ fontSize: 12, fontFamily: 'monospace' }}
+                    />
+                  </div>
+
+                  {settings.googleClientId && (
+                    <div style={{ fontSize: 12, color: 'var(--text2)', padding: '10px 14px', background: 'var(--bg3)', borderRadius: 8, lineHeight: 1.7 }}>
+                      Client ID saved. Open the <strong style={{ color: 'var(--text3)' }}>JARVIS tab</strong> — you'll see a ☁️ button in the header. Tap it to sign in with Google and start saving conversations automatically.
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
