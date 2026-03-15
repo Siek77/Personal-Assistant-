@@ -10,14 +10,19 @@ async function hashPassphrase(passphrase) {
 }
 
 const SECTIONS = [
-  { id: 'profile', label: '👤 Profile', icon: '👤' },
-  { id: 'ai', label: '🤖 AI', icon: '🤖' },
-  { id: 'spotify', label: '🎵 Spotify', icon: '🎵' },
-  { id: 'esp32', label: '📡 ESP32', icon: '📡' },
-  { id: 'services', label: '🔌 Services', icon: '🔌' },
-  { id: 'appearance', label: '🎨 Look', icon: '🎨' },
-  { id: 'memory', label: '🧠 Memory', icon: '🧠' },
-  { id: 'sync', label: '☁️ Sync', icon: '☁️' },
+  { id: 'profile',    label: '👤 Profile',    icon: '👤' },
+  { id: 'ai',         label: '🤖 AI',         icon: '🤖' },
+  { id: 'spotify',    label: '🎵 Spotify',    icon: '🎵' },
+  { id: 'esp32',      label: '📡 ESP32',      icon: '📡' },
+  { id: 'home',       label: '🏠 Home',       icon: '🏠' },
+  { id: 'calendar',   label: '📅 Calendar',   icon: '📅' },
+  { id: 'music',      label: '🎵 Apple Music',icon: '🎵' },
+  { id: 'notion',     label: '📝 Notion',     icon: '📝' },
+  { id: 'uptime',     label: '🟢 Uptime',     icon: '🟢' },
+  { id: 'services',   label: '🔌 Services',   icon: '🔌' },
+  { id: 'appearance', label: '🎨 Look',       icon: '🎨' },
+  { id: 'memory',     label: '🧠 Memory',     icon: '🧠' },
+  { id: 'sync',       label: '☁️ Sync',       icon: '☁️' },
 ]
 
 function ToggleSetting({ label, desc, value, onChange }) {
@@ -58,6 +63,63 @@ function InputSetting({ label, desc, value, onChange, type = 'text', placeholder
             {show ? '🙈' : '👁️'}
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+function UptimeUrlsEditor({ value, onChange }) {
+  let urls = []
+  try { urls = JSON.parse(value || '[]') } catch {}
+  const [list, setList] = useState(urls)
+  const [newLabel, setNewLabel] = useState('')
+  const [newUrl, setNewUrl] = useState('')
+
+  const commit = (next) => {
+    setList(next)
+    onChange(JSON.stringify(next))
+  }
+
+  const add = () => {
+    if (!newUrl.trim()) return
+    const url = newUrl.trim().startsWith('http') ? newUrl.trim() : 'https://' + newUrl.trim()
+    commit([...list, { label: newLabel.trim() || url, url }])
+    setNewLabel('')
+    setNewUrl('')
+  }
+
+  const remove = (i) => commit(list.filter((_, j) => j !== i))
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+        {list.map((item, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 8 }}>
+            <span style={{ fontSize: 12, flex: 1, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <strong>{item.label}</strong> <span style={{ color: 'var(--text2)', fontSize: 11 }}>{item.url}</span>
+            </span>
+            <button className="btn btn-ghost btn-sm" onClick={() => remove(i)} style={{ color: '#ef4444', fontSize: 11 }}>✕</button>
+          </div>
+        ))}
+        {list.length === 0 && <div style={{ fontSize: 12, color: 'var(--text2)' }}>No URLs added yet.</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          placeholder="Label (e.g. My App)"
+          value={newLabel}
+          onChange={e => setNewLabel(e.target.value)}
+          style={{ fontSize: 13, flex: '1 1 120px' }}
+        />
+        <input
+          className="input"
+          placeholder="https://example.com"
+          value={newUrl}
+          onChange={e => setNewUrl(e.target.value)}
+          style={{ fontSize: 13, flex: '2 1 200px' }}
+          onKeyDown={e => e.key === 'Enter' && add()}
+        />
+        <button className="btn btn-primary btn-sm" onClick={add} style={{ flexShrink: 0 }}>Add</button>
       </div>
     </div>
   )
@@ -323,6 +385,164 @@ export default function SettingsTab() {
                 <div style={{ marginTop: 16, padding: 12, background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
                   <strong style={{ color: 'var(--cyan)' }}>Tip:</strong> Devices must be on the same local network. HTTP requests are made directly from your browser to the ESP32.
                 </div>
+              </div>
+            )}
+
+            {/* Home Assistant */}
+            {activeSection === 'home' && (
+              <div className="settings-section">
+                <h3>Home Assistant / HomeKit / Matter</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Connect to a <strong>Home Assistant</strong> instance to control HomeKit devices, Matter accessories, Zigbee/Z-Wave sensors, and any other smart home gear.
+                </p>
+                <InputSetting
+                  label="Home Assistant URL"
+                  desc="Your HA instance URL — must be reachable from your browser (local or via Nabu Casa / Cloudflare Tunnel)"
+                  value={settings.haUrl || ''}
+                  onChange={v => save('haUrl', v)}
+                  placeholder="http://homeassistant.local:8123"
+                />
+                <InputSetting
+                  label="Long-Lived Access Token"
+                  desc="Profile → Long-Lived Access Tokens → Create Token in Home Assistant"
+                  value={settings.haToken || ''}
+                  onChange={v => save('haToken', v)}
+                  type="password"
+                  placeholder="eyJ..."
+                />
+                <div style={{ marginTop: 16, padding: 12, background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--orange)', marginBottom: 8 }}>CORS Configuration Required</div>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                    Add to your HA <code style={{ fontSize: 11, background: 'var(--bg3)', padding: '1px 4px', borderRadius: 3 }}>configuration.yaml</code>:
+                    <pre style={{ marginTop: 8, padding: '10px 12px', background: 'var(--bg2)', borderRadius: 6, fontSize: 11, overflowX: 'auto' }}>{`http:
+  cors_allowed_origins:
+    - https://jarvis-dashboard-fawn.vercel.app`}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Calendar */}
+            {activeSection === 'calendar' && (
+              <div className="settings-section">
+                <h3>Calendar</h3>
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#4285f4' }}>Google Calendar</h4>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.6 }}>
+                    Uses the same Google OAuth Client ID as Google Drive (Settings → Sync). Make sure the <strong>Google Calendar API</strong> is enabled in your Google Cloud project.
+                    The Calendar tab will prompt you to sign in with a <code style={{ fontSize: 11 }}>calendar.readonly</code> scope.
+                  </p>
+                  <div style={{ padding: 10, background: 'rgba(66,133,244,0.08)', border: '1px solid rgba(66,133,244,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                    Enable the Calendar API: <strong>console.cloud.google.com → APIs & Services → Library → Google Calendar API → Enable</strong>
+                  </div>
+                </div>
+
+                <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
+
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: 'var(--text)' }}>Apple Calendar (iCloud CalDAV)</h4>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.6 }}>
+                    Reads your iCloud calendars via CalDAV. Requires an <strong>App-Specific Password</strong> — your main Apple ID password won't work here.
+                  </p>
+                  <InputSetting
+                    label="Apple ID Email"
+                    value={settings.calDavEmail || ''}
+                    onChange={v => save('calDavEmail', v)}
+                    placeholder="you@icloud.com"
+                  />
+                  <InputSetting
+                    label="App-Specific Password"
+                    desc="Create at appleid.apple.com → Sign-In and Security → App-Specific Passwords"
+                    value={settings.calDavPassword || ''}
+                    onChange={v => save('calDavPassword', v)}
+                    type="password"
+                    placeholder="xxxx-xxxx-xxxx-xxxx"
+                  />
+                  <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+                    Credentials are sent to the /api/apple-calendar proxy only when you load calendars — never stored server-side.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Apple Music */}
+            {activeSection === 'music' && (
+              <div className="settings-section">
+                <h3>Apple Music</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Connect Apple Music via <strong>MusicKit JS</strong> to show now-playing info and playback controls in the Dashboard.
+                  Requires an Apple Developer account and a MusicKit key.
+                </p>
+                <InputSetting
+                  label="MusicKit Developer Token"
+                  desc="A JWT signed with your MusicKit key (ES256). Valid for up to 6 months."
+                  value={settings.appleMusicDeveloperToken || ''}
+                  onChange={v => save('appleMusicDeveloperToken', v)}
+                  type="password"
+                  placeholder="eyJhbGciOiJFUzI1NiIsInR5cCI6..."
+                />
+                <div style={{ marginTop: 16, padding: 12, background: 'rgba(252,60,68,0.08)', border: '1px solid rgba(252,60,68,0.2)', borderRadius: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#fc3c44', marginBottom: 8 }}>How to get a Developer Token</div>
+                  <ol style={{ fontSize: 12, color: 'var(--text2)', paddingLeft: 16, lineHeight: 1.8 }}>
+                    <li>Go to <strong>developer.apple.com</strong> → Certificates, IDs & Profiles</li>
+                    <li>Create a <strong>MusicKit</strong> key (Keys section)</li>
+                    <li>Download the .p8 private key file</li>
+                    <li>Generate a JWT using your Team ID, Key ID, and .p8 file</li>
+                    <li>Paste the resulting token above</li>
+                  </ol>
+                  <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text2)' }}>
+                    Tools to generate the token: <code>music-jwt</code> npm package, or use Apple's JWT signing scripts.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Notion */}
+            {activeSection === 'notion' && (
+              <div className="settings-section">
+                <h3>Notion</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Show a Notion database as a widget on the Dashboard. Uses an <strong>Internal Integration</strong> token for read access.
+                </p>
+                <InputSetting
+                  label="Notion API Key"
+                  desc="Create an Internal Integration at notion.so/my-integrations and copy the secret"
+                  value={settings.notionApiKey || ''}
+                  onChange={v => save('notionApiKey', v)}
+                  type="password"
+                  placeholder="secret_..."
+                />
+                <InputSetting
+                  label="Database ID"
+                  desc="From the database page URL: notion.so/username/DATABASE_ID?v=..."
+                  value={settings.notionDatabaseId || ''}
+                  onChange={v => save('notionDatabaseId', v)}
+                  placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                />
+                <div style={{ marginTop: 16, padding: 12, background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Setup</div>
+                  <ol style={{ fontSize: 12, color: 'var(--text2)', paddingLeft: 16, lineHeight: 1.8 }}>
+                    <li>Go to <strong>notion.so/my-integrations</strong> → New integration</li>
+                    <li>Give it a name, select read content, copy the Internal Integration Token</li>
+                    <li>Open the Notion database you want to show</li>
+                    <li>Click ⋯ → Connections → Connect your integration</li>
+                    <li>Copy the database ID from the URL</li>
+                  </ol>
+                </div>
+              </div>
+            )}
+
+            {/* Uptime */}
+            {activeSection === 'uptime' && (
+              <div className="settings-section">
+                <h3>Uptime Monitor</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Add URLs to monitor. The Dashboard will show live status (up/down) and response times.
+                </p>
+                <UptimeUrlsEditor
+                  value={settings.uptimeUrls || '[]'}
+                  onChange={v => save('uptimeUrls', v)}
+                />
               </div>
             )}
 

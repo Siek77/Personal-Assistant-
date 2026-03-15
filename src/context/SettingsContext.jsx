@@ -21,6 +21,19 @@ const DEFAULTS = {
   voiceEnabled: false,
   scanlineEffect: true,
   theme: 'dark',
+  // Home Assistant / HomeKit / Matter
+  haUrl: '',
+  haToken: '',
+  // Notion
+  notionApiKey: '',
+  notionDatabaseId: '',
+  // Apple Music (MusicKit JS)
+  appleMusicDeveloperToken: '',
+  // Apple Calendar (CalDAV)
+  calDavEmail: '',
+  calDavPassword: '',
+  // Uptime monitoring — JSON string of [{label, url}]
+  uptimeUrls: '[]',
 }
 
 export function SettingsProvider({ children }) {
