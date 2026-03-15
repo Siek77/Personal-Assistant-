@@ -185,11 +185,16 @@
 .t-dur { color:var(--text2);font-size:12px;font-family:monospace; }
 
 /* Dashboard */
-.dashboard-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px; }
+.dashboard-shell { height: auto; }
+.dashboard-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr));gap:12px; }
 .widget { background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px; }
+.widget-wide { grid-column: span 2; }
 .widget-header { display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2); }
-.weather-temp { font-size:40px;font-weight:300;line-height:1;color:var(--text); }
-.weather-icon { font-size:32px; }
+.weather-body { display:flex;align-items:center;gap:16px;flex-wrap:wrap; }
+.weather-search { display:flex;gap:6px;align-items:center;margin-left:auto;flex-shrink:0; }
+.weather-search .input { width:130px; }
+.weather-temp { font-size:36px;font-weight:300;line-height:1;color:var(--text); }
+.weather-icon { font-size:32px;flex-shrink:0; }
 .stat-value { font-size:26px;font-weight:600;color:var(--text);font-family:'Orbitron',monospace; }
 .stat-label { font-size:12px;color:var(--text2);margin-top:4px; }
 .news-item { padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer; }
@@ -198,7 +203,6 @@
 .news-item:hover .news-headline { color:var(--blue); }
 .news-headline { font-size:13px;font-weight:500;line-height:1.4;color:var(--text);transition:color 0.15s; }
 .news-meta { font-size:11px;color:var(--text2);margin-top:3px; }
-.quick-actions { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px; }
 .qa-btn { background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;transition:all 0.15s;font-size:12px;color:var(--text3); }
 .qa-btn:hover { background:var(--bg2);border-color:var(--border2);color:var(--text); }
 .qa-icon { font-size:18px;margin-bottom:3px; }
@@ -293,9 +297,16 @@
 
   /* Dashboard responsive */
   .dashboard-grid { grid-template-columns: 1fr; }
+  .widget-wide { grid-column: span 1; }
+  .weather-body { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .weather-search { margin-left: 0; width: 100%; }
+  .weather-search .input { flex: 1; width: auto; }
 
   /* Device grid */
   .device-grid { grid-template-columns: 1fr; }
+
+  /* Compact JARVIS provider select on mobile */
+  .provider-select { max-width: 120px; font-size: 11px !important; padding: 4px 6px !important; }
 }
 
 /* Desktop — hide memory toggle, settings-shell height locked */

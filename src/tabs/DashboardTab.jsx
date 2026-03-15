@@ -47,34 +47,33 @@ function WeatherWidget({ apiKey }) {
   }
 
   if (!apiKey) return (
-    <div className="widget" style={{ gridColumn: 'span 2' }}>
+    <div className="widget widget-wide">
       <div className="widget-header"><span>🌤️</span> Weather</div>
       <p style={{ fontSize: 12, color: 'var(--text2)' }}>Add OpenWeatherMap API key in Settings.</p>
     </div>
   )
 
   return (
-    <div className="widget" style={{ gridColumn: 'span 2' }}>
-      <div className="widget-header"><span>🌤️</span> Weather</div>
+    <div className="widget widget-wide">
+      <div className="widget-header"><span>🌤️</span> Weather — {weather?.name || city}</div>
       {loading && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading...</div>}
       {weather && !loading && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div className="weather-icon">{WEATHER_ICONS[weather.weather[0].main] || '🌡️'}</div>
-          <div>
-            <div className="weather-temp">{Math.round(weather.main.temp)}°C</div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 2 }}>
-              {weather.weather[0].description} · {weather.name}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>
-              Feels {Math.round(weather.main.feels_like)}° · H:{Math.round(weather.main.temp_max)}° L:{Math.round(weather.main.temp_min)}°
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-              💧{weather.main.humidity}% · 💨{Math.round(weather.wind.speed)}m/s
+        <div className="weather-body">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+            <div className="weather-icon">{WEATHER_ICONS[weather.weather[0].main] || '🌡️'}</div>
+            <div>
+              <div className="weather-temp">{Math.round(weather.main.temp)}°C</div>
+              <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 2 }}>
+                {weather.weather[0].description}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
+                Feels {Math.round(weather.main.feels_like)}° · 💧{weather.main.humidity}% · 💨{Math.round(weather.wind.speed)}m/s
+              </div>
             </div>
           </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-            <input className="input" style={{ width: 120, fontSize: 12, padding: '6px 10px' }}
-              placeholder="City..." value={inputCity} onChange={e => setInputCity(e.target.value)}
+          <div className="weather-search">
+            <input className="input" style={{ fontSize: 13, padding: '6px 10px' }}
+              placeholder="Search city..." value={inputCity} onChange={e => setInputCity(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && search()} />
             <button className="btn btn-ghost btn-sm" onClick={search}>Go</button>
             <button className="btn btn-ghost btn-sm" onClick={() => fetchWeather(city)}>⟳</button>
@@ -91,11 +90,11 @@ function ClockWidget() {
   return (
     <div className="widget">
       <div className="widget-header"><span>🕐</span> Time</div>
-      <div className="stat-value" style={{ fontSize: 32, letterSpacing: 2 }}>
+      <div className="stat-value" style={{ fontSize: 28, letterSpacing: 2 }}>
         {time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
       </div>
       <div className="stat-label">
-        {time.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+        {time.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
       </div>
     </div>
   )
@@ -103,21 +102,21 @@ function ClockWidget() {
 
 function QuickActionsWidget({ onJarvisPrompt }) {
   const actions = [
-    { icon: '☀️', label: "Today's briefing", prompt: "Give me a morning briefing - what should I know and focus on today?" },
-    { icon: '📋', label: 'My routine', prompt: "Summarize my known routines and suggest optimizations." },
-    { icon: '💡', label: 'Suggestions', prompt: "Based on what you know about me, what do you suggest I do right now?" },
-    { icon: '🎯', label: 'Focus mode', prompt: "Help me get into focus mode. What should I prioritize?" },
-    { icon: '🌙', label: 'Evening wrap', prompt: "Give me an evening wind-down routine based on my preferences." },
-    { icon: '⚡', label: 'Quick facts', prompt: "What interesting things do you know about me so far?" },
+    { icon: '☀️', label: "Briefing", prompt: "Give me a morning briefing — what should I know and focus on today?" },
+    { icon: '📋', label: 'Routine', prompt: "Summarize my known routines and suggest optimizations." },
+    { icon: '💡', label: 'Suggest', prompt: "Based on what you know about me, what do you suggest I do right now?" },
+    { icon: '🎯', label: 'Focus', prompt: "Help me get into focus mode. What should I prioritize?" },
+    { icon: '🌙', label: 'Evening', prompt: "Give me an evening wind-down routine based on my preferences." },
+    { icon: '⚡', label: 'Facts', prompt: "What interesting things do you know about me so far?" },
   ]
   return (
-    <div className="widget" style={{ gridColumn: 'span 2' }}>
+    <div className="widget widget-wide">
       <div className="widget-header"><span>⚡</span> Quick JARVIS Actions</div>
-      <div className="quick-actions" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
         {actions.map(a => (
           <div key={a.label} className="qa-btn" onClick={() => onJarvisPrompt(a.prompt)}>
             <div className="qa-icon">{a.icon}</div>
-            <div>{a.label}</div>
+            <div style={{ fontSize: 12 }}>{a.label}</div>
           </div>
         ))}
       </div>
@@ -167,8 +166,7 @@ function NewsWidget({ apiKey }) {
       const data = await res.json()
       if (data.articles) {
         setNews(data.articles.map(a => ({
-          title: a.title,
-          source: a.source.name,
+          title: a.title, source: a.source.name,
           time: new Date(a.publishedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
           url: a.url,
         })))
@@ -180,11 +178,9 @@ function NewsWidget({ apiKey }) {
   useEffect(() => { fetchNews() }, [apiKey])
 
   return (
-    <div className="widget" style={{ gridColumn: 'span 2' }}>
-      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', flexWrap: 'nowrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>📰</span> Headlines
-        </div>
+    <div className="widget widget-wide">
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>📰</span> Headlines</div>
         <button className="btn btn-ghost btn-sm" onClick={fetchNews}>{loading ? '...' : '⟳'}</button>
       </div>
       {news.map((n, i) => (
@@ -193,9 +189,7 @@ function NewsWidget({ apiKey }) {
           <div className="news-meta">{n.source} · {n.time}</div>
         </div>
       ))}
-      {!apiKey && (
-        <p style={{ fontSize: 11, color: 'var(--text2)', marginTop: 8 }}>Add NewsAPI key in Settings for live news.</p>
-      )}
+      {!apiKey && <p style={{ fontSize: 11, color: 'var(--text2)', marginTop: 8 }}>Add NewsAPI key in Settings for live news.</p>}
     </div>
   )
 }
@@ -207,7 +201,7 @@ function MemoryStatsWidget() {
       <div className="widget-header"><span>🧠</span> JARVIS Memory</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {[
-          ['Facts Learned', memory.facts.length, 'var(--blue)'],
+          ['Facts', memory.facts.length, 'var(--blue)'],
           ['Routines', memory.routines.length, 'var(--purple)'],
           ['Topics', memory.recentTopics.length, 'var(--cyan)'],
         ].map(([l, v, c]) => (
@@ -221,26 +215,25 @@ function MemoryStatsWidget() {
   )
 }
 
-export default function DashboardTab({ onSwitchTab }) {
+export default function DashboardTab() {
   const { settings } = useSettings()
 
   const handleJarvisAction = (prompt) => {
-    // Store the prompt in session storage and let user navigate
     sessionStorage.setItem('jarvis_autoPrompt', prompt)
-    alert(`JARVIS prompt ready: "${prompt.slice(0, 50)}..." — switch to the JARVIS tab to ask this!`)
+    alert(`JARVIS prompt ready: "${prompt.slice(0, 50)}…" — switch to the JARVIS tab!`)
   }
 
   return (
-    <div style={{ height: 'calc(100vh - var(--header) - 40px)', overflowY: 'auto' }}>
-      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div className="dashboard-shell">
+      <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--purple)' }}>📊 Dashboard</h2>
-        <div style={{ fontSize: 12, color: 'var(--text2)' }}>Your command center overview</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)' }}>Command center</div>
       </div>
-      <div className="dashboard-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+      <div className="dashboard-grid">
         <ClockWidget />
-        <WeatherWidget apiKey={settings.weatherApiKey} />
         <SystemStatsWidget />
         <MemoryStatsWidget />
+        <WeatherWidget apiKey={settings.weatherApiKey} />
         <QuickActionsWidget onJarvisPrompt={handleJarvisAction} />
         <NewsWidget apiKey={settings.newsApiKey} />
       </div>

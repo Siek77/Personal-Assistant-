@@ -247,7 +247,7 @@ export default function JarvisTab() {
           <select
             value={provider}
             onChange={e => updateSetting('aiProvider', e.target.value)}
-            className="input"
+            className="input provider-select"
             style={{ width: 'auto', fontSize: 12, padding: '5px 10px', height: 34 }}
           >
             {Object.entries(PROVIDERS).map(([id, p]) => (

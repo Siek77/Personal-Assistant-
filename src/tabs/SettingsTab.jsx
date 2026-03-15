@@ -4,12 +4,13 @@ import { useMemory } from '../context/MemoryContext'
 
 const SECTIONS = [
   { id: 'profile', label: '👤 Profile', icon: '👤' },
-  { id: 'ai', label: '🤖 AI / Claude', icon: '🤖' },
+  { id: 'ai', label: '🤖 AI', icon: '🤖' },
   { id: 'spotify', label: '🎵 Spotify', icon: '🎵' },
   { id: 'esp32', label: '📡 ESP32', icon: '📡' },
   { id: 'services', label: '🔌 Services', icon: '🔌' },
-  { id: 'appearance', label: '🎨 Appearance', icon: '🎨' },
+  { id: 'appearance', label: '🎨 Look', icon: '🎨' },
   { id: 'memory', label: '🧠 Memory', icon: '🧠' },
+  { id: 'sync', label: '☁️ Sync', icon: '☁️' },
 ]
 
 function ToggleSetting({ label, desc, value, onChange }) {
@@ -57,14 +58,50 @@ function InputSetting({ label, desc, value, onChange, type = 'text', placeholder
 
 export default function SettingsTab() {
   const { settings, updateSetting, updateSettings } = useSettings()
-  const { memory, clearMemory, addFact } = useMemory()
+  const { memory, clearMemory } = useMemory()
   const [activeSection, setActiveSection] = useState('profile')
   const [saved, setSaved] = useState(false)
+  const [syncStatus, setSyncStatus] = useState('')
+  const [importText, setImportText] = useState('')
 
   const save = (key, val) => {
     updateSetting(key, val)
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
+  }
+
+  const exportData = () => {
+    const data = {
+      settings,
+      esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
+      memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
+      version: 1,
+      exportedAt: new Date().toISOString(),
+    }
+    const encoded = btoa(JSON.stringify(data))
+    navigator.clipboard.writeText(encoded).then(() => {
+      setSyncStatus('✓ Copied to clipboard! Paste on any device to sync.')
+      setTimeout(() => setSyncStatus(''), 4000)
+    }).catch(() => {
+      setSyncStatus(encoded) // fallback: show it
+    })
+  }
+
+  const importData = () => {
+    try {
+      const raw = importText.trim()
+      const data = JSON.parse(atob(raw))
+      if (!data.settings) throw new Error('Invalid sync code')
+      updateSettings(data.settings)
+      if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
+      if (data.memory) localStorage.setItem('jarvis_memory', JSON.stringify(data.memory))
+      setImportText('')
+      setSyncStatus('✓ Settings imported! Reload to apply all changes.')
+      setTimeout(() => setSyncStatus(''), 5000)
+    } catch {
+      setSyncStatus('✗ Invalid sync code. Make sure you copied the full text.')
+      setTimeout(() => setSyncStatus(''), 4000)
+    }
   }
 
   return (
@@ -353,6 +390,68 @@ export default function SettingsTab() {
                   >
                     Clear Memory
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* Sync */}
+            {activeSection === 'sync' && (
+              <div className="settings-section">
+                <h3>Sync Across Devices</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Export all your settings, API keys, ESP32 devices, and memory into a portable sync code. Paste it on any other device to instantly sync everything.
+                </p>
+
+                {/* Export */}
+                <div style={{ marginBottom: 20 }}>
+                  <div className="settings-label" style={{ marginBottom: 8 }}>Export Settings</div>
+                  <div className="settings-desc" style={{ marginBottom: 10 }}>
+                    Copies a sync code to your clipboard. Open JARVIS on another device → Settings → Sync → paste it in the Import box below.
+                  </div>
+                  <button className="btn btn-primary" onClick={exportData} style={{ width: '100%' }}>
+                    📤 Copy Sync Code to Clipboard
+                  </button>
+                </div>
+
+                {/* Import */}
+                <div style={{ marginBottom: 16 }}>
+                  <div className="settings-label" style={{ marginBottom: 8 }}>Import Settings</div>
+                  <div className="settings-desc" style={{ marginBottom: 10 }}>
+                    Paste a sync code exported from another device.
+                  </div>
+                  <textarea
+                    className="input"
+                    rows={3}
+                    placeholder="Paste sync code here..."
+                    value={importText}
+                    onChange={e => setImportText(e.target.value)}
+                    style={{ fontSize: 12, fontFamily: 'monospace', marginBottom: 8 }}
+                  />
+                  <button
+                    className="btn btn-green"
+                    onClick={importData}
+                    disabled={!importText.trim()}
+                    style={{ width: '100%' }}
+                  >
+                    📥 Import & Apply
+                  </button>
+                </div>
+
+                {syncStatus && (
+                  <div style={{
+                    padding: '10px 14px',
+                    background: syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.1)' : syncStatus.startsWith('✗') ? 'rgba(239,68,68,0.1)' : 'var(--bg3)',
+                    border: `1px solid ${syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.3)' : syncStatus.startsWith('✗') ? 'rgba(239,68,68,0.3)' : 'var(--border)'}`,
+                    borderRadius: 8, fontSize: 12, color: 'var(--text)',
+                    wordBreak: 'break-all', fontFamily: syncStatus.startsWith('ey') || syncStatus.length > 80 ? 'monospace' : 'inherit',
+                    lineHeight: 1.6,
+                  }}>
+                    {syncStatus}
+                  </div>
+                )}
+
+                <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
+                  <strong style={{ color: 'var(--text3)' }}>Privacy note:</strong> The sync code is a local base64 string — nothing is sent to any server. Transfer it yourself via AirDrop, iCloud Notes, email, or any messaging app.
                 </div>
               </div>
             )}
