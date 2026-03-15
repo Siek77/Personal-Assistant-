@@ -180,6 +180,7 @@ export default function JarvisTab() {
   const [newFact, setNewFact] = useState('')
   const [showMemory, setShowMemory] = useState(false)
   const [driveStatus, setDriveStatus] = useState('')
+  const [driveSaving, setDriveSaving] = useState(false)
   const [factsExpanded, setFactsExpanded] = useState(false)
   const [routinesExpanded, setRoutinesExpanded] = useState(false)
   const [driveConvsExpanded, setDriveConvsExpanded] = useState(false)
@@ -222,8 +223,18 @@ export default function JarvisTab() {
   // Save to Drive immediately after every AI reply
   const scheduleDriveSave = useCallback((msgs) => {
     if (!drive.isSignedIn) return
-    drive.saveConversation(convIdRef.current, msgs).catch(() => {})
+    setDriveSaving(true)
+    drive.saveConversation(convIdRef.current, msgs)
+      .then(() => { setDriveStatus('✓ Saved'); setTimeout(() => setDriveStatus(''), 2500) })
+      .catch(() => { setDriveStatus('⚠️ Save failed'); setTimeout(() => setDriveStatus(''), 3000) })
+      .finally(() => setDriveSaving(false))
   }, [drive.isSignedIn, drive.saveConversation])
+
+  const manualSave = () => {
+    const saveable = messages.filter(m => m.id !== 'welcome')
+    if (!saveable.length) return
+    scheduleDriveSave(messages)
+  }
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return
@@ -313,14 +324,34 @@ export default function JarvisTab() {
           </select>
 
           {settings.googleClientId && (
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => drive.isSignedIn ? drive.signOut() : drive.signIn()}
-              title={drive.isSignedIn ? 'Drive connected — click to disconnect' : 'Connect Google Drive'}
-              style={{ fontSize: 16, opacity: drive.signInStatus === 'idle' ? 0.4 : 1 }}
-            >
-              {drive.signInStatus === 'signing-in' ? '⏳' : drive.isSignedIn ? '🟢' : '☁️'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              {drive.isSignedIn && (
+                <>
+                  {driveStatus && (
+                    <span style={{ fontSize: 11, color: driveStatus.startsWith('✓') ? 'var(--green)' : 'var(--red)', whiteSpace: 'nowrap' }}>
+                      {driveStatus}
+                    </span>
+                  )}
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={manualSave}
+                    disabled={driveSaving || messages.filter(m => m.id !== 'welcome').length === 0}
+                    title="Save conversation to Google Drive"
+                    style={{ fontSize: 13 }}
+                  >
+                    {driveSaving ? '⏳' : '💾'}
+                  </button>
+                </>
+              )}
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => drive.isSignedIn ? drive.signOut() : drive.signIn()}
+                title={drive.isSignedIn ? 'Drive connected — click to disconnect' : 'Connect Google Drive'}
+                style={{ fontSize: 16, opacity: drive.signInStatus === 'idle' ? 0.4 : 1 }}
+              >
+                {drive.signInStatus === 'signing-in' ? '⏳' : drive.isSignedIn ? '🟢' : '☁️'}
+              </button>
+            </div>
           )}
           <button className="btn btn-ghost btn-sm memory-toggle-btn" onClick={() => setShowMemory(s => !s)}>
             {showMemory ? '💬' : '🧠'}
