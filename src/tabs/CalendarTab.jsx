@@ -16,6 +16,7 @@ function persistCalEvents(events, source) {
         .map(({ title, start, end, allDay, location }) => ({ title, start, end, allDay, location, source })),
     ]
     localStorage.setItem('jarvis_calendar_events', JSON.stringify(merged))
+    window.dispatchEvent(new CustomEvent('jarvis:calendar-updated'))
   } catch { /* ignore storage errors */ }
 }
 
