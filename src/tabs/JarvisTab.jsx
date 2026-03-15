@@ -314,10 +314,10 @@ export default function JarvisTab() {
 
           {settings.googleClientId && (
             <button
-              className={`btn btn-ghost btn-sm`}
-              onClick={drive.isSignedIn ? undefined : drive.signIn}
-              title={drive.isSignedIn ? driveStatus || 'Drive connected — conversations saving' : 'Connect Google Drive'}
-              style={{ fontSize: 16, opacity: drive.isSignedIn ? 1 : 0.4 }}
+              className="btn btn-ghost btn-sm"
+              onClick={() => drive.isSignedIn ? drive.signOut() : drive.signIn()}
+              title={drive.isSignedIn ? 'Drive connected — click to disconnect' : 'Connect Google Drive'}
+              style={{ fontSize: 16, opacity: drive.signInStatus === 'idle' ? 0.4 : 1 }}
             >
               {drive.signInStatus === 'signing-in' ? '⏳' : drive.isSignedIn ? '🟢' : '☁️'}
             </button>

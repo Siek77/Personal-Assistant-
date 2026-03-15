@@ -10,11 +10,20 @@ export function useGoogleDrive(clientId) {
   const [token, setToken] = useState(() => {
     const t = sessionStorage.getItem('gdrive_token')
     const exp = parseInt(sessionStorage.getItem('gdrive_token_exp') || '0')
+    const storedScope = sessionStorage.getItem('gdrive_scope')
+    // If scope changed, discard old token so we re-auth with new permissions
+    if (storedScope !== SCOPE) {
+      sessionStorage.removeItem('gdrive_token')
+      sessionStorage.removeItem('gdrive_token_exp')
+      sessionStorage.removeItem('gdrive_folder_id')
+      return null
+    }
     return t && Date.now() < exp ? t : null
   })
-  const [signInStatus, setSignInStatus] = useState(() =>
-    sessionStorage.getItem('gdrive_token') ? 'signed-in' : 'idle'
-  )
+  const [signInStatus, setSignInStatus] = useState(() => {
+    const storedScope = sessionStorage.getItem('gdrive_scope')
+    return storedScope === SCOPE && sessionStorage.getItem('gdrive_token') ? 'signed-in' : 'idle'
+  })
   const clientRef = useRef(null)
   const folderIdRef = useRef(sessionStorage.getItem('gdrive_folder_id') || null)
 
@@ -32,6 +41,7 @@ export function useGoogleDrive(clientId) {
           const exp = Date.now() + (response.expires_in - 30) * 1000
           sessionStorage.setItem('gdrive_token', response.access_token)
           sessionStorage.setItem('gdrive_token_exp', String(exp))
+          sessionStorage.setItem('gdrive_scope', SCOPE)
           setToken(response.access_token)
           setSignInStatus('signed-in')
         },
@@ -79,6 +89,7 @@ export function useGoogleDrive(clientId) {
             const exp = Date.now() + (r.expires_in - 30) * 1000
             sessionStorage.setItem('gdrive_token', r.access_token)
             sessionStorage.setItem('gdrive_token_exp', String(exp))
+            sessionStorage.setItem('gdrive_scope', SCOPE)
             setToken(r.access_token)
             currentToken = r.access_token
           }
