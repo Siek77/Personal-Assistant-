@@ -65,7 +65,7 @@ function InputSetting({ label, desc, value, onChange, type = 'text', placeholder
 
 export default function SettingsTab() {
   const { settings, updateSetting, updateSettings } = useSettings()
-  const { memory, clearMemory } = useMemory()
+  const { memory, clearMemory, mergeRemoteMemory } = useMemory()
   const [activeSection, setActiveSection] = useState('profile')
   const [saved, setSaved] = useState(false)
   const [syncStatus, setSyncStatus] = useState('')
@@ -123,7 +123,7 @@ export default function SettingsTab() {
       if (!data?.settings) { setSyncStatus('✗ No data found for this passphrase.'); return }
       updateSettings(data.settings)
       if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
-      if (data.memory) localStorage.setItem('jarvis_memory', JSON.stringify(data.memory))
+      if (data.memory) mergeRemoteMemory(data.memory)
       const ts = data.savedAt || new Date().toISOString()
       localStorage.setItem('jarvis_last_synced', ts)
       setLastSynced(ts)

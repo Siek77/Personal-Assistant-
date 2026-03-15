@@ -37,31 +37,26 @@ const SAMPLE_NEWS = [
   { title: 'Apple Announces iOS 19 Developer Preview', source: 'MacRumors', time: '12h ago', url: '#' },
 ]
 
+// Lostant, IL — lat/lon fixed (no API key, no geocoding needed)
+const WEATHER_LAT = 41.1836
+const WEATHER_LON = -89.0651
+const WEATHER_LABEL = 'Lostant, IL'
+
 function WeatherWidget() {
   const [weather, setWeather] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [city, setCity] = useState(localStorage.getItem('weather_city') || 'London')
-  const [inputCity, setInputCity] = useState('')
 
-  const fetchWeather = async (c) => {
+  const fetchWeather = async () => {
     setLoading(true)
     setError(null)
     try {
-      // Geocode city name → lat/lon
-      const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(c)}&count=1`)
-      const geoData = await geoRes.json()
-      if (!geoData.results?.length) throw new Error(`City "${c}" not found`)
-      const { latitude, longitude, name, country } = geoData.results[0]
-
-      // Fetch weather
-      const wRes = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-        `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code`
+      const res = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}` +
+        `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&temperature_unit=fahrenheit&wind_speed_unit=mph`
       )
-      const wData = await wRes.json()
-      setWeather({ ...wData.current, name, country })
-      localStorage.setItem('weather_city', c)
+      const data = await res.json()
+      setWeather(data.current)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -69,38 +64,27 @@ function WeatherWidget() {
     }
   }
 
-  useEffect(() => { fetchWeather(city) }, [])
-
-  const search = () => {
-    if (!inputCity.trim()) return
-    setCity(inputCity.trim())
-    fetchWeather(inputCity.trim())
-    setInputCity('')
-  }
+  useEffect(() => { fetchWeather() }, [])
 
   return (
     <div className="widget widget-wide">
-      <div className="widget-header"><span>🌤️</span> Weather — {weather ? `${weather.name}, ${weather.country}` : city}</div>
-      {loading && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading...</div>}
-      {error && !loading && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 8 }}>⚠️ {error}</div>}
-      {weather && !loading && (
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>🌤️</span> Weather — {WEATHER_LABEL}</div>
+        <button className="btn btn-ghost btn-sm" onClick={fetchWeather}>{loading ? '...' : '⟳'}</button>
+      </div>
+      {loading && !weather && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading...</div>}
+      {error && !loading && <div style={{ fontSize: 12, color: 'var(--red)' }}>⚠️ {error}</div>}
+      {weather && (
         <div className="weather-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
             <div className="weather-icon">{wmoIcon(weather.weather_code)}</div>
             <div>
-              <div className="weather-temp">{Math.round(weather.temperature_2m)}°C</div>
+              <div className="weather-temp">{Math.round(weather.temperature_2m)}°F</div>
               <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 2 }}>{wmoDesc(weather.weather_code)}</div>
               <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
-                Feels {Math.round(weather.apparent_temperature)}° · 💧{weather.relative_humidity_2m}% · 💨{Math.round(weather.wind_speed_10m)}m/s
+                Feels {Math.round(weather.apparent_temperature)}° · 💧{weather.relative_humidity_2m}% · 💨{Math.round(weather.wind_speed_10m)}mph
               </div>
             </div>
-          </div>
-          <div className="weather-search">
-            <input className="input" style={{ fontSize: 13, padding: '6px 10px' }}
-              placeholder="Search city..." value={inputCity} onChange={e => setInputCity(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && search()} />
-            <button className="btn btn-ghost btn-sm" onClick={search}>Go</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => fetchWeather(city)}>⟳</button>
           </div>
         </div>
       )}

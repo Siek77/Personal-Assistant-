@@ -6,6 +6,7 @@ import SpotifyTab from './tabs/SpotifyTab'
 import DashboardTab from './tabs/DashboardTab'
 import SettingsTab from './tabs/SettingsTab'
 import { MemoryProvider } from './context/MemoryContext'
+import { useMemory } from './context/MemoryContext'
 import { SettingsProvider } from './context/SettingsContext'
 import { useSettings } from './context/SettingsContext'
 import './App.css'
@@ -20,10 +21,11 @@ async function hashPassphrase(passphrase) {
 // Auto-push on settings change (debounced 2s) + auto-pull on mount
 function SyncAutoManager() {
   const { settings, updateSettings } = useSettings()
+  const { mergeRemoteMemory } = useMemory()
   const timerRef = useRef(null)
   const isFirstRender = useRef(true)
 
-  // Auto-pull on mount if passphrase is set
+  // Auto-pull on mount if passphrase is set — MERGES memory, never overwrites
   useEffect(() => {
     const passphrase = localStorage.getItem('jarvis_sync_passphrase')
     if (!passphrase) return
@@ -35,7 +37,7 @@ function SyncAutoManager() {
         if (!data?.settings) return
         updateSettings(data.settings)
         if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
-        if (data.memory) localStorage.setItem('jarvis_memory', JSON.stringify(data.memory))
+        if (data.memory) mergeRemoteMemory(data.memory)  // merge, not overwrite
         if (data.savedAt) localStorage.setItem('jarvis_last_synced', data.savedAt)
       } catch {}
     })()
