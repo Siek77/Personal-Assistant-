@@ -162,7 +162,7 @@ function NewsWidget({ apiKey }) {
     if (!apiKey) return
     setLoading(true)
     try {
-      const res = await fetch(`https://newsapi.org/v2/top-headlines?language=en&pageSize=8&apiKey=${apiKey}`)
+      const res = await fetch('/api/news')
       const data = await res.json()
       if (data.articles) {
         setNews(data.articles.map(a => ({

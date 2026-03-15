@@ -1,6 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
+
+async function hashPassphrase(passphrase) {
+  const encoder = new TextEncoder()
+  const data = encoder.encode('jarvis:' + passphrase)
+  const hash = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
 
 const SECTIONS = [
   { id: 'profile', label: '👤 Profile', icon: '👤' },
@@ -62,7 +69,10 @@ export default function SettingsTab() {
   const [activeSection, setActiveSection] = useState('profile')
   const [saved, setSaved] = useState(false)
   const [syncStatus, setSyncStatus] = useState('')
-  const [importText, setImportText] = useState('')
+  const [syncPassphrase, setSyncPassphrase] = useState(() => localStorage.getItem('jarvis_sync_passphrase') || '')
+  const [lastSynced, setLastSynced] = useState(() => localStorage.getItem('jarvis_last_synced') || '')
+  const [syncing, setSyncing] = useState(false)
+  const syncTimerRef = useRef(null)
 
   const save = (key, val) => {
     updateSetting(key, val)
@@ -70,39 +80,69 @@ export default function SettingsTab() {
     setTimeout(() => setSaved(false), 1500)
   }
 
-  const exportData = () => {
-    const data = {
-      settings,
-      esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
-      memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
-      version: 1,
-      exportedAt: new Date().toISOString(),
-    }
-    const encoded = btoa(JSON.stringify(data))
-    navigator.clipboard.writeText(encoded).then(() => {
-      setSyncStatus('✓ Copied to clipboard! Paste on any device to sync.')
-      setTimeout(() => setSyncStatus(''), 4000)
-    }).catch(() => {
-      setSyncStatus(encoded) // fallback: show it
-    })
+  const savePassphrase = (val) => {
+    setSyncPassphrase(val)
+    localStorage.setItem('jarvis_sync_passphrase', val)
   }
 
-  const importData = () => {
+  const buildPayload = () => ({
+    settings,
+    esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
+    memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
+  })
+
+  const pushSync = async (passphrase = syncPassphrase) => {
+    if (!passphrase.trim()) return
+    setSyncing(true)
     try {
-      const raw = importText.trim()
-      const data = JSON.parse(atob(raw))
-      if (!data.settings) throw new Error('Invalid sync code')
+      const key = await hashPassphrase(passphrase.trim())
+      const res = await fetch(`/api/sync?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildPayload()),
+      })
+      const { savedAt } = await res.json()
+      localStorage.setItem('jarvis_last_synced', savedAt)
+      setLastSynced(savedAt)
+      setSyncStatus('✓ Synced to cloud!')
+    } catch {
+      setSyncStatus('✗ Sync failed — check your connection.')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncStatus(''), 4000)
+    }
+  }
+
+  const pullSync = async (passphrase = syncPassphrase) => {
+    if (!passphrase.trim()) return
+    setSyncing(true)
+    try {
+      const key = await hashPassphrase(passphrase.trim())
+      const res = await fetch(`/api/sync?key=${key}`)
+      const { data } = await res.json()
+      if (!data?.settings) { setSyncStatus('✗ No data found for this passphrase.'); return }
       updateSettings(data.settings)
       if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
       if (data.memory) localStorage.setItem('jarvis_memory', JSON.stringify(data.memory))
-      setImportText('')
-      setSyncStatus('✓ Settings imported! Reload to apply all changes.')
-      setTimeout(() => setSyncStatus(''), 5000)
+      const ts = data.savedAt || new Date().toISOString()
+      localStorage.setItem('jarvis_last_synced', ts)
+      setLastSynced(ts)
+      setSyncStatus('✓ Settings pulled! Reload to apply all changes.')
     } catch {
-      setSyncStatus('✗ Invalid sync code. Make sure you copied the full text.')
-      setTimeout(() => setSyncStatus(''), 4000)
+      setSyncStatus('✗ Pull failed — check your connection.')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncStatus(''), 5000)
     }
   }
+
+  // Debounced auto-push on settings change
+  useEffect(() => {
+    if (!syncPassphrase.trim()) return
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
+    syncTimerRef.current = setTimeout(() => pushSync(), 2000)
+    return () => clearTimeout(syncTimerRef.current)
+  }, [settings])
 
   return (
     <div className="settings-shell">
@@ -397,61 +437,68 @@ export default function SettingsTab() {
             {/* Sync */}
             {activeSection === 'sync' && (
               <div className="settings-section">
-                <h3>Sync Across Devices</h3>
+                <h3>Cloud Sync</h3>
                 <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-                  Export all your settings, API keys, ESP32 devices, and memory into a portable sync code. Paste it on any other device to instantly sync everything.
+                  Keep settings, API keys, ESP32 devices, and JARVIS memory in sync across all your devices automatically. Choose any passphrase — only you can access your data.
                 </p>
 
-                {/* Export */}
+                {/* Passphrase */}
                 <div style={{ marginBottom: 20 }}>
-                  <div className="settings-label" style={{ marginBottom: 8 }}>Export Settings</div>
+                  <div className="settings-label" style={{ marginBottom: 6 }}>Sync Passphrase</div>
                   <div className="settings-desc" style={{ marginBottom: 10 }}>
-                    Copies a sync code to your clipboard. Open JARVIS on another device → Settings → Sync → paste it in the Import box below.
+                    Pick any passphrase. It's hashed (SHA-256) before use as a storage key — never stored on the server. Use the same passphrase on all your devices.
                   </div>
-                  <button className="btn btn-primary" onClick={exportData} style={{ width: '100%' }}>
-                    📤 Copy Sync Code to Clipboard
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      className="input"
+                      type="password"
+                      placeholder="e.g. my-jarvis-secret"
+                      value={syncPassphrase}
+                      onChange={e => savePassphrase(e.target.value)}
+                      style={{ fontSize: 13, flex: 1 }}
+                    />
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => pushSync()}
+                    disabled={!syncPassphrase.trim() || syncing}
+                    style={{ flex: 1 }}
+                  >
+                    {syncing ? '⏳ Syncing…' : '☁️ Sync Now'}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => pullSync()}
+                    disabled={!syncPassphrase.trim() || syncing}
+                    style={{ flex: 1 }}
+                  >
+                    ⬇️ Pull from Cloud
                   </button>
                 </div>
 
-                {/* Import */}
-                <div style={{ marginBottom: 16 }}>
-                  <div className="settings-label" style={{ marginBottom: 8 }}>Import Settings</div>
-                  <div className="settings-desc" style={{ marginBottom: 10 }}>
-                    Paste a sync code exported from another device.
+                {lastSynced && (
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+                    Last synced: {new Date(lastSynced).toLocaleString()}
                   </div>
-                  <textarea
-                    className="input"
-                    rows={3}
-                    placeholder="Paste sync code here..."
-                    value={importText}
-                    onChange={e => setImportText(e.target.value)}
-                    style={{ fontSize: 12, fontFamily: 'monospace', marginBottom: 8 }}
-                  />
-                  <button
-                    className="btn btn-green"
-                    onClick={importData}
-                    disabled={!importText.trim()}
-                    style={{ width: '100%' }}
-                  >
-                    📥 Import & Apply
-                  </button>
-                </div>
+                )}
 
                 {syncStatus && (
                   <div style={{
                     padding: '10px 14px',
-                    background: syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.1)' : syncStatus.startsWith('✗') ? 'rgba(239,68,68,0.1)' : 'var(--bg3)',
-                    border: `1px solid ${syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.3)' : syncStatus.startsWith('✗') ? 'rgba(239,68,68,0.3)' : 'var(--border)'}`,
-                    borderRadius: 8, fontSize: 12, color: 'var(--text)',
-                    wordBreak: 'break-all', fontFamily: syncStatus.startsWith('ey') || syncStatus.length > 80 ? 'monospace' : 'inherit',
-                    lineHeight: 1.6,
+                    background: syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                    border: `1px solid ${syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                    borderRadius: 8, fontSize: 12, color: 'var(--text)', lineHeight: 1.6,
                   }}>
                     {syncStatus}
                   </div>
                 )}
 
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--text3)' }}>Privacy note:</strong> The sync code is a local base64 string — nothing is sent to any server. Transfer it yourself via AirDrop, iCloud Notes, email, or any messaging app.
+                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> Your passphrase is hashed client-side with SHA-256 before being used as a key. The server never sees your passphrase. Settings auto-push 2 seconds after any change (if passphrase is set).
                 </div>
               </div>
             )}
