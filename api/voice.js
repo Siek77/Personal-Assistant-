@@ -19,6 +19,23 @@
 
 import { list } from '@vercel/blob'
 
+// Fetch the N most recent blob conversations for prior-session context
+async function fetchRecentBlobConversations(syncKey, limit = 3) {
+  if (!syncKey || !/^[a-f0-9]{64}$/.test(syncKey)) return []
+  try {
+    const { blobs } = await list({ prefix: `jarvis-conv/${syncKey}/`, limit: 100 })
+    const recent = blobs
+      .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
+      .slice(0, limit)
+    const results = await Promise.all(
+      recent.map(b => fetch(b.url).then(r => r.json()).catch(() => null))
+    )
+    return results.filter(Boolean).reverse() // oldest first so context reads naturally
+  } catch {
+    return []
+  }
+}
+
 // Fetch Notion database pages (tasks, notes, etc.) with 3s timeout
 async function fetchNotionTasks(apiKey, dbId) {
   const controller = new AbortController()
@@ -115,12 +132,15 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── Kick off blob fetch and (if env HA creds exist) HA fetch in parallel ──
+  // ── Kick off all independent fetches immediately in parallel ──
   const envHaUrl   = (process.env.HA_URL   || '').replace(/\/$/, '')
   const envHaToken =  process.env.HA_TOKEN  || ''
   const earlyHaPromise = (envHaUrl && envHaToken)
     ? fetchHaStates(envHaUrl, envHaToken)
     : null
+
+  // Blob conversations fetch starts NOW — no credentials needed, uses SYNC_KEY directly
+  const blobConvPromise = fetchRecentBlobConversations(process.env.SYNC_KEY)
 
   const synced = await fetchSyncedData(process.env.SYNC_KEY)
   const syncedSettings = synced?.settings || {}
@@ -167,7 +187,7 @@ export default async function handler(req, res) {
     ? fetchNotionTasks(notionKey, notionDbId)
     : Promise.resolve(null)
 
-  const [haStates, notionData] = await Promise.all([haStatesPromise, notionPromise])
+  const [haStates, notionData, recentBlobConvs] = await Promise.all([haStatesPromise, notionPromise, blobConvPromise])
 
   // ── Format HA entity summary ──
   let entitySummary = ''
@@ -212,10 +232,12 @@ export default async function handler(req, res) {
     if (upcoming.length) calendarSummary = `\nUpcoming events (next 7 days):\n${upcoming.join('\n')}`
   }
 
-  // ── Recent conversation history from synced blob (written by JarvisTab) ──
-  const recentConv = (synced?.recentConv || [])
-    .filter(m => m.role && m.content)
-    .slice(-12) // last 12 turns max
+  // ── Prior conversation context from blob conversations ──
+  // Flatten last 6 messages from each of the 3 most recent sessions → max 18 turns
+  const recentConv = recentBlobConvs
+    .flatMap(c => (c.messages || []).filter(m => m.role && m.content).slice(-6))
+    .slice(-18)
+    .map(m => ({ role: m.role, content: m.content }))
 
   // ── System prompt (voice-optimised — no markdown) ──
   const memorySection = [
