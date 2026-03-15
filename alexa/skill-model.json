@@ -1,0 +1,42 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "jarvis",
+      "intents": [
+        {
+          "name": "JarvisIntent",
+          "slots": [
+            {
+              "name": "query",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "{query}",
+            "tell me {query}",
+            "ask {query}",
+            "I need {query}",
+            "what is {query}",
+            "can you {query}",
+            "please {query}",
+            "turn {query}",
+            "set {query}",
+            "check {query}"
+          ]
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": ["stop", "exit", "quit", "goodbye", "bye"]
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": ["cancel", "never mind"]
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": ["help", "what can you do"]
+        }
+      ]
+    }
+  }
+}
