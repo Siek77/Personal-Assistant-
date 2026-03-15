@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "jarvis",
+      "invocationName": "hey jarvis",
       "intents": [
         {
           "name": "JarvisIntent",
@@ -12,7 +12,6 @@
             }
           ],
           "samples": [
-            "{query}",
             "tell me {query}",
             "ask {query}",
             "I need {query}",
