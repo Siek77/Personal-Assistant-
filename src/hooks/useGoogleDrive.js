@@ -146,6 +146,23 @@ export function useGoogleDrive(clientId) {
     return results.filter(Boolean)
   }, [token, driveReq])
 
+  // List all saved conversations (metadata only)
+  const listAllConversations = useCallback(async () => {
+    if (!token) return []
+    const listRes = await driveReq(
+      `${DRIVE}/files?spaces=appDataFolder&q=name+contains+'jarvis_conv_'` +
+      `&orderBy=createdTime+desc&pageSize=100&fields=files(id,name,createdTime,size)`
+    )
+    const { files = [] } = await listRes.json()
+    return files
+  }, [token, driveReq])
+
+  // Delete a conversation by Drive file ID
+  const deleteConversation = useCallback(async (fileId) => {
+    if (!token) return
+    await driveReq(`${DRIVE}/files/${fileId}`, { method: 'DELETE' })
+  }, [token, driveReq])
+
   return {
     isSignedIn: !!token,
     signInStatus,
@@ -153,5 +170,7 @@ export function useGoogleDrive(clientId) {
     signOut,
     saveConversation,
     loadRecentConversations,
+    listAllConversations,
+    deleteConversation,
   }
 }

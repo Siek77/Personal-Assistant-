@@ -158,7 +158,7 @@ async function callAI(provider, settings, messages, systemPrompt) {
 // ── Component ──────────────────────────────────────────────────
 export default function JarvisTab() {
   const { settings, updateSetting } = useSettings()
-  const { memory, addFact, addTopic, extractMemory } = useMemory()
+  const { memory, addFact, editFact, removeFact, addRoutine, removeRoutine, addTopic, removeTopic, extractMemory } = useMemory()
   const provider = settings.aiProvider || 'groq'
   const cfg = PROVIDERS[provider]
 
@@ -180,6 +180,12 @@ export default function JarvisTab() {
   const [newFact, setNewFact] = useState('')
   const [showMemory, setShowMemory] = useState(false)
   const [driveStatus, setDriveStatus] = useState('')
+  const [factsExpanded, setFactsExpanded] = useState(false)
+  const [routinesExpanded, setRoutinesExpanded] = useState(false)
+  const [driveConvsExpanded, setDriveConvsExpanded] = useState(false)
+  const [editingFactId, setEditingFactId] = useState(null)
+  const [editingFactText, setEditingFactText] = useState('')
+  const [driveConvs, setDriveConvs] = useState([])
   const messagesEnd = useRef(null)
   const saveTimerRef = useRef(null)
 
@@ -205,6 +211,12 @@ export default function JarvisTab() {
         setTimeout(() => setDriveStatus(''), 3000)
       }
     })()
+  }, [drive.isSignedIn])
+
+  // Load Drive conversation list when signed in
+  useEffect(() => {
+    if (!drive.isSignedIn) return
+    drive.listAllConversations().then(setDriveConvs).catch(() => {})
   }, [drive.isSignedIn])
 
   // Debounced save to Drive after each message exchange
@@ -386,45 +398,80 @@ export default function JarvisTab() {
 
       {/* ── Memory Panel ── */}
       <div className={`memory-panel ${showMemory ? 'memory-panel--open' : ''}`}>
-        {/* Memory */}
+
+        {/* Facts */}
         <div className="card" style={{ marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
             <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>🧠 Memory</h4>
-            <span className="badge badge-blue">{memory.facts.length}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="badge badge-blue">{memory.facts.length}</span>
+              {memory.facts.length > 3 && (
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                  onClick={() => setFactsExpanded(e => !e)}>
+                  {factsExpanded ? '▲ less' : '▼ all'}
+                </button>
+              )}
+            </div>
           </div>
           {memory.facts.length === 0
-            ? <p style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.5 }}>JARVIS will remember things you tell it as you chat.</p>
-            : memory.facts.slice(0, 6).map(f => (
-              <div key={f.id} className="memory-item">
-                <span className="mem-icon">{f.category === 'preference' ? '❤️' : '📌'}</span>
-                <span className="mem-text">{f.text.length > 80 ? f.text.slice(0, 80) + '…' : f.text}</span>
+            ? <p style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.5 }}>JARVIS will remember things as you chat.</p>
+            : (factsExpanded ? memory.facts : memory.facts.slice(0, 3)).map(f => (
+              <div key={f.id} className="memory-item" style={{ alignItems: 'flex-start', gap: 4 }}>
+                <span className="mem-icon" style={{ marginTop: 1 }}>{f.category === 'preference' ? '❤️' : f.category === 'manual' ? '⭐' : '📌'}</span>
+                {editingFactId === f.id ? (
+                  <div style={{ flex: 1, display: 'flex', gap: 4 }}>
+                    <input className="input" style={{ fontSize: 11, flex: 1 }} autoFocus
+                      value={editingFactText} onChange={e => setEditingFactText(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { editFact(f.id, editingFactText); setEditingFactId(null) }
+                        if (e.key === 'Escape') setEditingFactId(null)
+                      }} />
+                    <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => { editFact(f.id, editingFactText); setEditingFactId(null) }}>✓</button>
+                    <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setEditingFactId(null)}>✕</button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="mem-text" style={{ flex: 1 }}>{f.text}</span>
+                    <button onClick={() => { setEditingFactId(f.id); setEditingFactText(f.text) }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text2)', padding: '0 2px', lineHeight: 1 }}>✏️</button>
+                    <button onClick={() => removeFact(f.id)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--red)', padding: '0 2px', lineHeight: 1, opacity: 0.7 }}>✕</button>
+                  </>
+                )}
               </div>
             ))
           }
-        </div>
-
-        {/* Tell JARVIS */}
-        <div className="card" style={{ marginBottom: 12 }}>
-          <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>📝 Tell JARVIS About You</h4>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              className="input" style={{ fontSize: 12 }}
-              placeholder="e.g. I wake up at 7am"
+          {/* Add fact */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <input className="input" style={{ fontSize: 12 }} placeholder="Add a fact… (Enter)"
               value={newFact} onChange={e => setNewFact(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && newFact.trim()) { addFact(newFact.trim(), 'manual'); setNewFact('') } }}
-            />
-            <button className="btn btn-primary btn-sm" onClick={() => { if (newFact.trim()) { addFact(newFact.trim(), 'manual'); setNewFact('') } }}>+</button>
+              onKeyDown={e => { if (e.key === 'Enter' && newFact.trim()) { addFact(newFact.trim(), 'manual'); setNewFact('') } }} />
+            <button className="btn btn-primary btn-sm"
+              onClick={() => { if (newFact.trim()) { addFact(newFact.trim(), 'manual'); setNewFact('') } }}>+</button>
           </div>
         </div>
 
         {/* Routines */}
         {memory.routines.length > 0 && (
           <div className="card" style={{ marginBottom: 12 }}>
-            <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>🔄 Routines</h4>
-            {memory.routines.slice(0, 4).map(r => (
-              <div key={r.id} className="memory-item">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>🔄 Routines</h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="badge badge-blue">{memory.routines.length}</span>
+                {memory.routines.length > 3 && (
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                    onClick={() => setRoutinesExpanded(e => !e)}>
+                    {routinesExpanded ? '▲ less' : '▼ all'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {(routinesExpanded ? memory.routines : memory.routines.slice(0, 3)).map(r => (
+              <div key={r.id} className="memory-item" style={{ gap: 4 }}>
                 <span className="mem-icon">📅</span>
-                <span className="mem-text">{r.description.length > 70 ? r.description.slice(0, 70) + '…' : r.description}</span>
+                <span className="mem-text" style={{ flex: 1 }}>{r.description}</span>
+                <button onClick={() => removeRoutine(r.id)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--red)', padding: '0 2px', opacity: 0.7 }}>✕</button>
               </div>
             ))}
           </div>
@@ -433,12 +480,49 @@ export default function JarvisTab() {
         {/* Topics */}
         {memory.recentTopics.length > 0 && (
           <div className="card" style={{ marginBottom: 12 }}>
-            <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>💬 Recent Topics</h4>
+            <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>💬 Topics</h4>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {memory.recentTopics.map((t, i) => (
-                <span key={i} className="badge badge-blue" style={{ cursor: 'pointer' }} onClick={() => setInput(t)}>{t}</span>
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: 11, padding: '2px 8px', borderRadius: 10,
+                  background: 'rgba(59,130,246,0.15)', color: 'var(--blue)', border: '1px solid rgba(59,130,246,0.25)' }}>
+                  <span style={{ cursor: 'pointer' }} onClick={() => setInput(t)}>{t}</span>
+                  <button onClick={() => removeTopic(t)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', fontSize: 10, padding: 0, lineHeight: 1 }}>✕</button>
+                </span>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Drive conversation history */}
+        {drive.isSignedIn && (
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: driveConvsExpanded ? 8 : 0 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>🗂️ Drive History</h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="badge badge-blue">{driveConvs.length}</span>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
+                  onClick={() => setDriveConvsExpanded(e => !e)}>
+                  {driveConvsExpanded ? '▲' : '▼'}
+                </button>
+              </div>
+            </div>
+            {driveConvsExpanded && (
+              driveConvs.length === 0
+                ? <p style={{ fontSize: 11, color: 'var(--text2)' }}>No conversations saved yet.</p>
+                : driveConvs.map(f => (
+                  <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
+                    <span style={{ flex: 1, color: 'var(--text3)' }}>
+                      {new Date(f.createdTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <button onClick={async () => {
+                      await drive.deleteConversation(f.id)
+                      setDriveConvs(prev => prev.filter(c => c.id !== f.id))
+                    }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: 13, opacity: 0.7, padding: '0 2px' }}>🗑</button>
+                  </div>
+                ))
+            )}
           </div>
         )}
 
