@@ -2,9 +2,31 @@ import { useState, useEffect } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
 
-const WEATHER_ICONS = {
-  'Clear': '☀️', 'Clouds': '☁️', 'Rain': '🌧️', 'Drizzle': '🌦️',
-  'Thunderstorm': '⛈️', 'Snow': '❄️', 'Mist': '🌫️', 'Fog': '🌫️',
+// WMO weather code → emoji (Open-Meteo)
+function wmoIcon(code) {
+  if (code === 0) return '☀️'
+  if (code <= 2) return '🌤️'
+  if (code === 3) return '☁️'
+  if (code <= 48) return '🌫️'
+  if (code <= 55) return '🌦️'
+  if (code <= 67) return '🌧️'
+  if (code <= 77) return '❄️'
+  if (code <= 82) return '🌧️'
+  if (code <= 86) return '🌨️'
+  return '⛈️'
+}
+function wmoDesc(code) {
+  if (code === 0) return 'Clear sky'
+  if (code === 1) return 'Mainly clear'
+  if (code === 2) return 'Partly cloudy'
+  if (code === 3) return 'Overcast'
+  if (code <= 48) return 'Foggy'
+  if (code <= 55) return 'Drizzle'
+  if (code <= 67) return 'Rain'
+  if (code <= 77) return 'Snow'
+  if (code <= 82) return 'Rain showers'
+  if (code <= 86) return 'Snow showers'
+  return 'Thunderstorm'
 }
 
 const SAMPLE_NEWS = [
@@ -15,7 +37,7 @@ const SAMPLE_NEWS = [
   { title: 'Apple Announces iOS 19 Developer Preview', source: 'MacRumors', time: '12h ago', url: '#' },
 ]
 
-function WeatherWidget({ apiKey }) {
+function WeatherWidget() {
   const [weather, setWeather] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -23,14 +45,22 @@ function WeatherWidget({ apiKey }) {
   const [inputCity, setInputCity] = useState('')
 
   const fetchWeather = async (c) => {
-    if (!apiKey) return
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${c}&appid=${apiKey}&units=metric`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.message || `Error ${res.status}`)
-      setWeather(data)
+      // Geocode city name → lat/lon
+      const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(c)}&count=1`)
+      const geoData = await geoRes.json()
+      if (!geoData.results?.length) throw new Error(`City "${c}" not found`)
+      const { latitude, longitude, name, country } = geoData.results[0]
+
+      // Fetch weather
+      const wRes = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+        `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code`
+      )
+      const wData = await wRes.json()
+      setWeather({ ...wData.current, name, country })
       localStorage.setItem('weather_city', c)
     } catch (e) {
       setError(e.message)
@@ -39,7 +69,7 @@ function WeatherWidget({ apiKey }) {
     }
   }
 
-  useEffect(() => { fetchWeather(city) }, [apiKey])
+  useEffect(() => { fetchWeather(city) }, [])
 
   const search = () => {
     if (!inputCity.trim()) return
@@ -48,29 +78,20 @@ function WeatherWidget({ apiKey }) {
     setInputCity('')
   }
 
-  if (!apiKey) return (
-    <div className="widget widget-wide">
-      <div className="widget-header"><span>🌤️</span> Weather</div>
-      <p style={{ fontSize: 12, color: 'var(--text2)' }}>Add OpenWeatherMap API key in Settings.</p>
-    </div>
-  )
-
   return (
     <div className="widget widget-wide">
-      <div className="widget-header"><span>🌤️</span> Weather — {weather?.name || city}</div>
+      <div className="widget-header"><span>🌤️</span> Weather — {weather ? `${weather.name}, ${weather.country}` : city}</div>
       {loading && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading...</div>}
       {error && !loading && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 8 }}>⚠️ {error}</div>}
       {weather && !loading && (
         <div className="weather-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-            <div className="weather-icon">{WEATHER_ICONS[weather.weather[0].main] || '🌡️'}</div>
+            <div className="weather-icon">{wmoIcon(weather.weather_code)}</div>
             <div>
-              <div className="weather-temp">{Math.round(weather.main.temp)}°C</div>
-              <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 2 }}>
-                {weather.weather[0].description}
-              </div>
+              <div className="weather-temp">{Math.round(weather.temperature_2m)}°C</div>
+              <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 2 }}>{wmoDesc(weather.weather_code)}</div>
               <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
-                Feels {Math.round(weather.main.feels_like)}° · 💧{weather.main.humidity}% · 💨{Math.round(weather.wind.speed)}m/s
+                Feels {Math.round(weather.apparent_temperature)}° · 💧{weather.relative_humidity_2m}% · 💨{Math.round(weather.wind_speed_10m)}m/s
               </div>
             </div>
           </div>
@@ -236,7 +257,7 @@ export default function DashboardTab() {
         <ClockWidget />
         <SystemStatsWidget />
         <MemoryStatsWidget />
-        <WeatherWidget apiKey={settings.weatherApiKey} />
+        <WeatherWidget />
         <QuickActionsWidget onJarvisPrompt={handleJarvisAction} />
         <NewsWidget apiKey={settings.newsApiKey} />
       </div>
