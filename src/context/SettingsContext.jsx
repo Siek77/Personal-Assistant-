@@ -24,8 +24,10 @@ const DEFAULTS = {
   // Theme colors
   primaryColor: '#3b82f6',
   secondaryColor: '#8b5cf6',
-  // Dashboard layout — JSON string of [{id, visible}] or null for default
+  // Dashboard layout — JSON string of [{id, x, y, w}] or null for default
   dashboardLayout: null,
+  // Custom widgets — JSON string of [{id, title, icon, type, content}]
+  customWidgets: '[]',
   // Home Assistant / HomeKit / Matter
   haUrl: '',
   haToken: '',
