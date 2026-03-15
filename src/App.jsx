@@ -18,10 +18,10 @@ async function hashPassphrase(passphrase) {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-// Auto-push on settings change (debounced 2s) + auto-pull on mount
+// Auto-push on settings OR memory change (debounced 2s) + auto-pull on mount
 function SyncAutoManager() {
   const { settings, updateSettings } = useSettings()
-  const { mergeRemoteMemory } = useMemory()
+  const { memory, mergeRemoteMemory } = useMemory()
   const timerRef = useRef(null)
   const isFirstRender = useRef(true)
 
@@ -37,13 +37,13 @@ function SyncAutoManager() {
         if (!data?.settings) return
         updateSettings(data.settings)
         if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
-        if (data.memory) mergeRemoteMemory(data.memory)  // merge, not overwrite
+        if (data.memory) mergeRemoteMemory(data.memory)
         if (data.savedAt) localStorage.setItem('jarvis_last_synced', data.savedAt)
       } catch {}
     })()
   }, [])
 
-  // Auto-push on settings change (skip initial render)
+  // Auto-push on settings OR memory change (debounced 2s, skip initial render)
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return }
     const passphrase = localStorage.getItem('jarvis_sync_passphrase')
@@ -67,7 +67,7 @@ function SyncAutoManager() {
       } catch {}
     }, 2000)
     return () => clearTimeout(timerRef.current)
-  }, [settings])
+  }, [settings, memory])  // ← memory added here
 
   return null
 }

@@ -219,13 +219,10 @@ export default function JarvisTab() {
     drive.listAllConversations().then(setDriveConvs).catch(() => {})
   }, [drive.isSignedIn])
 
-  // Debounced save to Drive after each message exchange
+  // Save to Drive immediately after every AI reply
   const scheduleDriveSave = useCallback((msgs) => {
     if (!drive.isSignedIn) return
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      drive.saveConversation(convIdRef.current, msgs).catch(() => {})
-    }, 2000)
+    drive.saveConversation(convIdRef.current, msgs).catch(() => {})
   }, [drive.isSignedIn, drive.saveConversation])
 
   const sendMessage = async () => {
