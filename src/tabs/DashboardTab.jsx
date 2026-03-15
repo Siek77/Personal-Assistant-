@@ -18,20 +18,22 @@ const SAMPLE_NEWS = [
 function WeatherWidget({ apiKey }) {
   const [weather, setWeather] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
   const [city, setCity] = useState(localStorage.getItem('weather_city') || 'London')
   const [inputCity, setInputCity] = useState('')
 
   const fetchWeather = async (c) => {
     if (!apiKey) return
     setLoading(true)
+    setError(null)
     try {
       const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${c}&appid=${apiKey}&units=metric`)
-      if (!res.ok) throw new Error('City not found')
       const data = await res.json()
+      if (!res.ok) throw new Error(data.message || `Error ${res.status}`)
       setWeather(data)
       localStorage.setItem('weather_city', c)
     } catch (e) {
-      console.warn(e)
+      setError(e.message)
     } finally {
       setLoading(false)
     }
@@ -57,6 +59,7 @@ function WeatherWidget({ apiKey }) {
     <div className="widget widget-wide">
       <div className="widget-header"><span>🌤️</span> Weather — {weather?.name || city}</div>
       {loading && <div style={{ fontSize: 12, color: 'var(--text2)' }}>Loading...</div>}
+      {error && !loading && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 8 }}>⚠️ {error}</div>}
       {weather && !loading && (
         <div className="weather-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
