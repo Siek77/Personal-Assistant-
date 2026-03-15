@@ -226,7 +226,11 @@ export default function JarvisTab() {
     setDriveSaving(true)
     drive.saveConversation(convIdRef.current, msgs)
       .then(() => { setDriveStatus('✓ Saved'); setTimeout(() => setDriveStatus(''), 2500) })
-      .catch(() => { setDriveStatus('⚠️ Save failed'); setTimeout(() => setDriveStatus(''), 3000) })
+      .catch((e) => {
+        console.error('Drive save error:', e)
+        setDriveStatus('⚠️ ' + (e.message || 'Save failed'))
+        setTimeout(() => setDriveStatus(''), 6000)
+      })
       .finally(() => setDriveSaving(false))
   }, [drive.isSignedIn, drive.saveConversation])
 
