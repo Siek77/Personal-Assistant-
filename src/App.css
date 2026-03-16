@@ -572,3 +572,5 @@ input[type=range] { cursor: pointer; }
     border-right-color: var(--border);
   }
 }
+
+.cam-thumb:hover { border-color: var(--border2) !important; }

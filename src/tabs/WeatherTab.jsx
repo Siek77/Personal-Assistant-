@@ -65,18 +65,19 @@ function RadarMap({ lat, lon }) {
     const map = L.map(mapRef.current, {
       center: [lat, lon],
       zoom: 7,
+      maxZoom: 12,
       zoomControl: true,
       attributionControl: false,
     })
 
     // Dark basemap
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
+      maxZoom: 12,
     }).addTo(map)
 
     // Labels on top of radar
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
+      maxZoom: 12,
       zIndex: 20,
     }).addTo(map)
 
@@ -115,7 +116,9 @@ function RadarMap({ lat, lon }) {
   const showFrame = (map, frame) => {
     const L = window.L
     if (radarLayer.current) map.removeLayer(radarLayer.current)
-    radarLayer.current = L.tileLayer(frame.url, { opacity: 0.65, zIndex: 10 })
+    // maxNativeZoom: 8 — RainViewer 512px tiles only go to zoom 8;
+    // Leaflet will scale them up rather than 404ing at higher levels
+    radarLayer.current = L.tileLayer(frame.url, { opacity: 0.65, zIndex: 10, maxNativeZoom: 8, maxZoom: 12 })
     radarLayer.current.addTo(map)
     setRadarTs(new Date(frame.time * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
   }

@@ -111,6 +111,7 @@ const WIDGET_CATALOG = {
   uptime:       { label: 'Uptime Monitor', icon: '🟢' },
   notion:       { label: 'Notion',         icon: '📝' },
   news:         { label: 'Headlines',      icon: '📰' },
+  cameras:      { label: 'Ring Cameras',   icon: '📷' },
 }
 
 // Generate default layout positions based on available canvas width
@@ -837,6 +838,157 @@ function AddWidgetPanel({ layout, customWidgets, onClose, onAdd, onCreate, onDel
   )
 }
 
+// ── CamerasWidget ──────────────────────────────────────────────────────────────
+function CamerasWidget({ haUrl, haToken }) {
+  const [cameras, setCameras]   = useState([])
+  const [snaps, setSnaps]       = useState({})   // entityId -> dataURL
+  const [loading, setLoading]   = useState(false)
+  const [modal, setModal]       = useState(null)  // entityId of expanded camera
+  const [modalSnap, setModalSnap] = useState(null)
+  const liveTimerRef = useRef(null)
+
+  // Fetch one snapshot via the HA proxy, returns a data URL
+  const fetchSnap = async (entityId) => {
+    try {
+      const r = await fetch('/api/ha-camera', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ haUrl, haToken, entityId }),
+      })
+      if (!r.ok) return null
+      const blob = await r.blob()
+      return URL.createObjectURL(blob)
+    } catch { return null }
+  }
+
+  // Discover camera entities from HA and load first snapshots
+  const discover = async () => {
+    if (!haUrl || !haToken) return
+    setLoading(true)
+    try {
+      const r = await fetch(`${haUrl.replace(/\/$/, '')}/api/states`, {
+        headers: { Authorization: `Bearer ${haToken}` },
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!r.ok) return
+      const states = await r.json()
+      const cams = states
+        .filter(s => s.entity_id.startsWith('camera.'))
+        .map(s => ({
+          id: s.entity_id,
+          name: s.attributes?.friendly_name || s.entity_id.replace('camera.', '').replace(/_/g, ' '),
+          state: s.state,
+        }))
+      setCameras(cams)
+      // Load thumbnails for all cameras
+      const entries = await Promise.all(cams.map(async c => [c.id, await fetchSnap(c.id)]))
+      setSnaps(Object.fromEntries(entries.filter(([, v]) => v)))
+    } catch { /* ignore */ } finally { setLoading(false) }
+  }
+
+  // Auto-refresh thumbnails every 60 seconds
+  useEffect(() => {
+    if (!haUrl || !haToken) return
+    discover()
+    const t = setInterval(async () => {
+      const entries = await Promise.all(cameras.map(async c => [c.id, await fetchSnap(c.id)]))
+      setSnaps(Object.fromEntries(entries.filter(([, v]) => v)))
+    }, 60000)
+    return () => clearInterval(t)
+  }, [haUrl, haToken])
+
+  // Live preview in modal — refresh every 5 seconds
+  useEffect(() => {
+    if (!modal) { clearInterval(liveTimerRef.current); setModalSnap(null); return }
+    const load = async () => { const url = await fetchSnap(modal); if (url) setModalSnap(url) }
+    load()
+    liveTimerRef.current = setInterval(load, 5000)
+    return () => clearInterval(liveTimerRef.current)
+  }, [modal])
+
+  if (!haUrl || !haToken) {
+    return (
+      <div className="widget">
+        <div className="widget-header"><span>📷</span> Ring Cameras</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+          Connect Home Assistant in <strong>Settings → Home</strong> to see your Ring cameras here.
+          Make sure the <strong>Ring integration</strong> is added in HA.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="widget">
+        <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>📷</span> Ring Cameras
+            <span style={{ fontSize: 10, color: 'var(--text2)', fontWeight: 400 }}>{cameras.length} found</span>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={discover} disabled={loading} style={{ fontSize: 11 }}>
+            {loading ? '⏳' : '⟳'}
+          </button>
+        </div>
+
+        {cameras.length === 0 && !loading && (
+          <div style={{ fontSize: 12, color: 'var(--text2)', padding: '8px 0' }}>
+            No camera entities found. Add Ring integration in Home Assistant.
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, marginTop: 4 }}>
+          {cameras.map(cam => (
+            <div
+              key={cam.id}
+              onClick={() => setModal(cam.id)}
+              style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg3)', transition: 'border-color 0.15s' }}
+              className="cam-thumb"
+            >
+              {snaps[cam.id]
+                ? <img src={snaps[cam.id]} alt={cam.name} style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }} />
+                : <div style={{ aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, color: 'var(--text2)' }}>
+                    {cam.state === 'unavailable' ? '⚠️' : '📷'}
+                  </div>
+              }
+              <div style={{ padding: '5px 8px', fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {cam.name}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 8 }}>Thumbnails refresh every 60s · tap to go live</div>
+      </div>
+
+      {/* Live modal */}
+      {modal && (
+        <div
+          onClick={() => setModal(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', maxWidth: 800, width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <span style={{ fontWeight: 600 }}>{cameras.find(c => c.id === modal)?.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--green)', marginLeft: 8 }}>● Live · refreshes every 5s</span>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setModal(null)}>✕</button>
+            </div>
+            {modalSnap
+              ? <img src={modalSnap} alt="live" style={{ width: '100%', display: 'block' }} />
+              : <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>⏳</div>
+            }
+            <div style={{ padding: '8px 16px', fontSize: 11, color: 'var(--text2)' }}>
+              {modal} · {new Date().toLocaleTimeString()}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 export default function DashboardTab() {
   const { settings, updateSetting } = useSettings()
@@ -930,6 +1082,7 @@ export default function DashboardTab() {
       case 'uptime':       return <UptimeWidget uptimeUrlsJson={settings.uptimeUrls} />
       case 'notion':       return <NotionWidget apiKey={settings.notionApiKey} databaseId={settings.notionDatabaseId} w={widgetW} />
       case 'news':         return <NewsWidget apiKey={settings.newsApiKey} />
+      case 'cameras':      return <CamerasWidget haUrl={settings.haUrl} haToken={settings.haToken} />
       default:             return null
     }
   }
