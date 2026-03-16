@@ -3,11 +3,8 @@ import { createContext, useContext, useState, useEffect } from 'react'
 const SettingsContext = createContext()
 
 const DEFAULTS = {
-  aiProvider: 'openrouter',     // 'openrouter' (primary) | 'groq' (backup)
-  openrouterApiKey: '',
-  openrouterModel: 'google/gemini-2.5-flash',
-  groqApiKey: '',
-  groqModel: 'llama-3.3-70b-versatile',
+  aiProvider: 'openai',
+  openaiModel: 'gpt-4o-mini',
   spotifyClientId: '',
   weatherApiKey: '',
   newsApiKey: '',

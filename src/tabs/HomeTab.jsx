@@ -266,6 +266,7 @@ export default function HomeTab() {
           temperature: thermo?.attributes?.current_temperature ?? null,
           lastUpdated: new Date().toISOString(),
         }))
+        window.dispatchEvent(new CustomEvent('jarvis:ha-updated'))
       } catch {}
     } catch (e) {
       setError(e.message)

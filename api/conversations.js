@@ -1,7 +1,7 @@
-// Conversation storage in Vercel Blob — accessible by voice.js server-side (no OAuth needed)
+// Conversation storage in Vercel Blob.
 //
-// Paths:  jarvis-conv/{syncKey}/{convId}.json
-// Limit:  500 MB per key (user-configurable soft cap)
+// Paths:  jarvis-conv/{storageKey}/{convId}.json
+// Limit:  500 MB per client key (user-configurable soft cap)
 //
 // GET  ?key=...          → { conversations:[{id,uploadedAt,size,url}], totalBytes, limitBytes }
 // POST ?key=...          body:{id,messages,savedAt}  → { ok, totalBytes, limitBytes }
@@ -10,6 +10,7 @@
 import { put, list, del } from '@vercel/blob'
 
 const LIMIT_BYTES = 500 * 1024 * 1024 // 500 MB soft cap
+const KEY_PATTERN = /^[a-zA-Z0-9_-]{8,120}$/
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -18,7 +19,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
 
   const { key } = req.query
-  if (!key || !/^[a-f0-9]{64}$/.test(key)) {
+  if (!key || !KEY_PATTERN.test(key)) {
     return res.status(400).json({ error: 'Invalid key' })
   }
 

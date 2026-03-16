@@ -2,7 +2,7 @@
 // Called server-side so secrets never touch the browser
 //
 // Required Vercel env vars:
-//   GROQ_API_KEY   — from console.groq.com
+//   OPENAI_API_KEY — from platform.openai.com
 //   VOICE_SECRET   — any random string, must match Lambda env var
 //   SYNC_KEY       — SHA-256 hash of your sync passphrase (64-char hex).
 //                    Copy it from browser console: await crypto.subtle.digest('SHA-256',
@@ -112,8 +112,9 @@ export default async function handler(req, res) {
   const { text, sessionHistory = [] } = req.body || {}
   if (!text?.trim()) return res.status(400).json({ error: 'text is required' })
 
-  const groqKey = process.env.GROQ_API_KEY
-  if (!groqKey) return res.status(500).json({ error: 'GROQ_API_KEY not configured' })
+  const openaiKey = process.env.OPENAI_API_KEY
+  const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini'
+  if (!openaiKey) return res.status(500).json({ error: 'OPENAI_API_KEY not configured' })
 
   // ── Helper: fetch HA states with a 3s timeout ──
   const cfClientId = process.env.CF_ACCESS_CLIENT_ID || ''
@@ -279,7 +280,7 @@ STRICT voice rules — you are speaking through Amazon Alexa:
 - If you don't know something, say so in one sentence.`,
   ].filter(Boolean).join('\n')
 
-  // ── Groq function-calling tools (only if HA is configured) ──
+  // ── Function-calling tools (only if HA is configured) ──
   const tools = haEnabled ? [
     {
       type: 'function',
@@ -320,23 +321,23 @@ STRICT voice rules — you are speaking through Amazon Alexa:
   ]
 
   try {
-    // ── First Groq call ──
-    const groqBody = {
-      model: 'llama-3.3-70b-versatile',
+    // ── First OpenAI call ──
+    const openaiBody = {
+      model: openaiModel,
       messages: [{ role: 'system', content: systemPrompt }, ...messages],
       max_tokens: 200,
       temperature: 0.7,
       ...(tools.length && { tools, tool_choice: 'auto' }),
     }
 
-    const r1 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const r1 = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${groqKey}` },
-      body: JSON.stringify(groqBody),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
+      body: JSON.stringify(openaiBody),
     })
     if (!r1.ok) {
       const e = await r1.json()
-      throw new Error(e.error?.message || `Groq error ${r1.status}`)
+      throw new Error(e.error?.message || `OpenAI error ${r1.status}`)
     }
     const d1 = await r1.json()
     const assistantMsg = d1.choices[0].message
@@ -381,12 +382,12 @@ STRICT voice rules — you are speaking through Amazon Alexa:
         })
       }
 
-      // ── Second Groq call — get the spoken confirmation ──
-      const r2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      // ── Second OpenAI call — get the spoken confirmation ──
+      const r2 = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${groqKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: openaiModel,
           messages: toolResultMessages,
           max_tokens: 120,
           temperature: 0.7,
@@ -394,7 +395,7 @@ STRICT voice rules — you are speaking through Amazon Alexa:
       })
       if (!r2.ok) {
         const e = await r2.json()
-        throw new Error(e.error?.message || `Groq error ${r2.status}`)
+        throw new Error(e.error?.message || `OpenAI error ${r2.status}`)
       }
       const d2 = await r2.json()
       const reply = d2.choices[0].message.content || 'Done.'

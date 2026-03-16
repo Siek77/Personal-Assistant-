@@ -1,13 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
-
-async function hashPassphrase(passphrase) {
-  const encoder = new TextEncoder()
-  const data = encoder.encode('jarvis:' + passphrase)
-  const hash = await crypto.subtle.digest('SHA-256', data)
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
+import { applyPersistedPayload, buildPersistencePayload, getOrCreateClientId } from '../utils/persistence'
 
 const SECTIONS = [
   { id: 'profile',    label: '👤 Profile',    icon: '👤' },
@@ -131,7 +125,7 @@ export default function SettingsTab() {
   const [activeSection, setActiveSection] = useState('profile')
   const [saved, setSaved] = useState(false)
   const [syncStatus, setSyncStatus] = useState('')
-  const [syncPassphrase, setSyncPassphrase] = useState(() => localStorage.getItem('jarvis_sync_passphrase') || '')
+  const [clientId] = useState(() => getOrCreateClientId())
   const [lastSynced, setLastSynced] = useState(() => localStorage.getItem('jarvis_last_synced') || '')
   const [syncing, setSyncing] = useState(false)
   const syncTimerRef = useRef(null)
@@ -142,26 +136,13 @@ export default function SettingsTab() {
     setTimeout(() => setSaved(false), 1500)
   }
 
-  const savePassphrase = (val) => {
-    setSyncPassphrase(val)
-    localStorage.setItem('jarvis_sync_passphrase', val)
-  }
-
-  const buildPayload = () => ({
-    settings,
-    esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
-    memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
-  })
-
-  const pushSync = async (passphrase = syncPassphrase) => {
-    if (!passphrase.trim()) return
+  const pushSync = async () => {
     setSyncing(true)
     try {
-      const key = await hashPassphrase(passphrase.trim())
-      const res = await fetch(`/api/sync?key=${key}`, {
+      const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload()),
+        body: JSON.stringify(buildPersistencePayload(settings, memory)),
       })
       const { savedAt } = await res.json()
       localStorage.setItem('jarvis_last_synced', savedAt)
@@ -175,21 +156,17 @@ export default function SettingsTab() {
     }
   }
 
-  const pullSync = async (passphrase = syncPassphrase) => {
-    if (!passphrase.trim()) return
+  const pullSync = async () => {
     setSyncing(true)
     try {
-      const key = await hashPassphrase(passphrase.trim())
-      const res = await fetch(`/api/sync?key=${key}`)
+      const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
       const { data } = await res.json()
-      if (!data?.settings) { setSyncStatus('✗ No data found for this passphrase.'); return }
-      updateSettings(data.settings)
-      if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
-      if (data.memory) mergeRemoteMemory(data.memory)
+      if (!data?.settings && !data?.memory) { setSyncStatus('✗ No cloud data found yet for this assistant.'); return }
+      applyPersistedPayload(data, { updateSettings, mergeRemoteMemory })
       const ts = data.savedAt || new Date().toISOString()
       localStorage.setItem('jarvis_last_synced', ts)
       setLastSynced(ts)
-      setSyncStatus('✓ Settings pulled! Reload to apply all changes.')
+      setSyncStatus('✓ Cloud state pulled successfully.')
     } catch {
       setSyncStatus('✗ Pull failed — check your connection.')
     } finally {
@@ -200,7 +177,6 @@ export default function SettingsTab() {
 
   // Debounced auto-push on settings change
   useEffect(() => {
-    if (!syncPassphrase.trim()) return
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
     syncTimerRef.current = setTimeout(() => pushSync(), 2000)
     return () => clearTimeout(syncTimerRef.current)
@@ -244,81 +220,30 @@ export default function SettingsTab() {
             {/* AI */}
             {activeSection === 'ai' && (
               <div className="settings-section">
-                <h3>AI Provider</h3>
+                <h3>OpenAI</h3>
 
-                {/* Provider picker */}
-                <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
-                  <div className="settings-label">Active Provider</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, width: '100%' }}>
-                    {[
-                      { id: 'openrouter', name: 'OpenRouter', badge: 'PRIMARY', color: '#8b5cf6', desc: 'Gemini 2.5 Flash · Best value' },
-                      { id: 'groq', name: 'Groq', badge: 'BACKUP', color: '#10b981', desc: 'Llama 3.3 · Auto-fallback' },
-                    ].map(p => {
-                      const active = (settings.aiProvider || 'groq') === p.id
-                      return (
-                        <div
-                          key={p.id}
-                          onClick={() => save('aiProvider', p.id)}
-                          style={{
-                            padding: '12px 14px', borderRadius: 10, cursor: 'pointer',
-                            border: `1px solid ${active ? p.color : 'var(--border)'}`,
-                            background: active ? p.color + '12' : 'var(--bg3)',
-                            transition: 'all 0.15s',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: active ? p.color : 'var(--text)' }}>{p.name}</span>
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8, background: p.color + '22', color: p.color }}>{p.badge}</span>
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text2)' }}>{p.desc}</div>
-                        </div>
-                      )
-                    })}
+                <div style={{ padding: '12px 14px', borderRadius: 10, border: '1px solid rgba(16,185,129,0.25)', background: 'rgba(16,185,129,0.08)', marginBottom: 16 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>OpenAI via Vercel API</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8, background: 'rgba(16,185,129,0.14)', color: '#10b981' }}>SERVER</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
+                    Chat requests now go through <code>/api/chat</code>. Set <code>OPENAI_API_KEY</code> in your Vercel project and JARVIS will use it server-side.
                   </div>
                 </div>
 
-                <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
-
-                {/* OpenRouter */}
-                {(settings.aiProvider || 'openrouter') === 'openrouter' && <>
-                  <InputSetting label="OpenRouter API Key" desc="Get at openrouter.ai/keys — pay-per-use, no subscription" value={settings.openrouterApiKey || ''} onChange={v => save('openrouterApiKey', v)} type="password" placeholder="sk-or-..." />
-                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                    <div className="settings-label">Model</div>
-                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.openrouterModel || 'google/gemini-2.5-flash'} onChange={e => save('openrouterModel', e.target.value)}>
-                      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
-                      <option value="google/gemini-2.5-flash:free">Gemini 2.5 Flash (Free tier)</option>
-                      <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
-                      <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (Free)</option>
-                    </select>
-                  </div>
-                  <div style={{ padding: '8px 12px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
-                    <strong style={{ color: 'var(--text)' }}>Gemini 2.5 Flash</strong> — ~$0.30/M input · $2.50/M output. If this fails, JARVIS automatically falls back to Groq.
-                  </div>
-                </>}
-
-                {/* Groq */}
-                {settings.aiProvider === 'groq' && <>
-                  <InputSetting label="Groq API Key" desc="Free at console.groq.com — no credit card needed" value={settings.groqApiKey || ''} onChange={v => save('groqApiKey', v)} type="password" placeholder="gsk_..." />
-                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                    <div className="settings-label">Model</div>
-                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.groqModel || 'llama-3.3-70b-versatile'} onChange={e => save('groqModel', e.target.value)}>
-                      <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Recommended)</option>
-                      <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fastest)</option>
-                      <option value="mixtral-8x7b-32768">Mixtral 8x7B</option>
-                      <option value="gemma2-9b-it">Gemma 2 9B</option>
-                    </select>
-                  </div>
-                </>}
-
-                {/* Groq backup key (always shown when OpenRouter is active) */}
-                {(settings.aiProvider || 'openrouter') === 'openrouter' && (
-                  <div style={{ marginTop: 8 }}>
-                    <InputSetting label="Groq API Key (Fallback)" desc="Optional — JARVIS auto-switches to Groq if OpenRouter fails" value={settings.groqApiKey || ''} onChange={v => save('groqApiKey', v)} type="password" placeholder="gsk_..." />
-                  </div>
-                )}
+                <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                  <div className="settings-label">Model</div>
+                  <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.openaiModel || 'gpt-4o-mini'} onChange={e => save('openaiModel', e.target.value)}>
+                    <option value="gpt-4o-mini">gpt-4o-mini (Recommended)</option>
+                    <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                    <option value="gpt-4.1">gpt-4.1</option>
+                    <option value="gpt-4o">gpt-4o</option>
+                  </select>
+                </div>
 
                 <div style={{ marginTop: 12, padding: 10, background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  All keys are stored only in your browser's localStorage and sent directly to the provider — never to any third party.
+                  The browser no longer sends model requests directly to OpenRouter or Groq. Your OpenAI key stays on the Vercel server.
                 </div>
               </div>
             )}
@@ -711,46 +636,43 @@ export default function SettingsTab() {
             {/* Sync */}
             {activeSection === 'sync' && (
               <div className="settings-section">
-                <h3>Cloud Sync</h3>
+                <h3>Cloud Persistence</h3>
                 <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-                  Keep settings, API keys, ESP32 devices, and JARVIS memory in sync across all your devices automatically. Choose any passphrase — only you can access your data.
+                  Settings, memory, conversation context, and local assistant state are automatically saved to Vercel Blob through the app API so JARVIS stays persistent between sessions.
                 </p>
 
-                {/* Passphrase */}
                 <div style={{ marginBottom: 20 }}>
-                  <div className="settings-label" style={{ marginBottom: 6 }}>Sync Passphrase</div>
+                  <div className="settings-label" style={{ marginBottom: 6 }}>Assistant Client ID</div>
                   <div className="settings-desc" style={{ marginBottom: 10 }}>
-                    Pick any passphrase. It's hashed (SHA-256) before use as a storage key — never stored on the server. Use the same passphrase on all your devices.
+                    This ID is generated automatically for this assistant instance and is used as the storage key for your persisted state.
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <input
                       className="input"
-                      type="password"
-                      placeholder="e.g. my-jarvis-secret"
-                      value={syncPassphrase}
-                      onChange={e => savePassphrase(e.target.value)}
+                      type="text"
+                      value={clientId}
+                      readOnly
                       style={{ fontSize: 13, flex: 1 }}
                     />
                   </div>
                 </div>
 
-                {/* Actions */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
                   <button
                     className="btn btn-primary"
                     onClick={() => pushSync()}
-                    disabled={!syncPassphrase.trim() || syncing}
+                    disabled={syncing}
                     style={{ flex: 1 }}
                   >
-                    {syncing ? '⏳ Syncing…' : '☁️ Sync Now'}
+                    {syncing ? '⏳ Saving…' : '☁️ Save Now'}
                   </button>
                   <button
                     className="btn btn-ghost"
                     onClick={() => pullSync()}
-                    disabled={!syncPassphrase.trim() || syncing}
+                    disabled={syncing}
                     style={{ flex: 1 }}
                   >
-                    ⬇️ Pull from Cloud
+                    ⬇️ Reload Cloud State
                   </button>
                 </div>
 
@@ -772,7 +694,7 @@ export default function SettingsTab() {
                 )}
 
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> Your passphrase is hashed client-side with SHA-256 before being used as a key. The server never sees your passphrase. Settings auto-push 2 seconds after any change (if passphrase is set).
+                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS auto-saves state roughly 2 seconds after changes. The same persisted state is also used by the new server-side OpenAI chat route, so memory survives stateless API calls.
                 </div>
 
                 {/* Google Drive — conversation history */}

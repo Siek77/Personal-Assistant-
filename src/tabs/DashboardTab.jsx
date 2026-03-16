@@ -182,6 +182,7 @@ function WeatherWidget() {
           rainChance,
           cachedAt: new Date().toISOString(),
         }))
+        window.dispatchEvent(new CustomEvent('jarvis:weather-updated'))
       } catch {}
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
@@ -810,7 +811,10 @@ function StocksWidget({ watchedStocks }) {
 
       setQuotes(finalQuotes)
       setLastFetched(new Date())
-      try { localStorage.setItem('jarvis_stocks_cache', JSON.stringify(finalQuotes)) } catch {}
+      try {
+        localStorage.setItem('jarvis_stocks_cache', JSON.stringify(finalQuotes))
+        window.dispatchEvent(new CustomEvent('jarvis:stocks-updated'))
+      } catch {}
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 

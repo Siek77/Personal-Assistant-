@@ -1,28 +1,19 @@
 // useConversations — Vercel Blob-backed conversation storage
-// Requires jarvis_sync_passphrase in localStorage (same passphrase as the sync key)
-// Voice.js can read the same blobs server-side → Groq gets full history via Alexa
+// Uses the app's generated client ID so persistence works without manual sync setup.
 
 import { useState, useCallback, useEffect } from 'react'
-
-async function hashPassphrase(passphrase) {
-  const encoder = new TextEncoder()
-  const data = encoder.encode('jarvis:' + passphrase)
-  const hash = await crypto.subtle.digest('SHA-256', data)
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
+import { getOrCreateClientId } from '../utils/persistence'
 
 export function useConversations() {
   const [storageInfo, setStorageInfo] = useState(null) // { totalBytes, limitBytes }
   const [isAvailable, setIsAvailable] = useState(false)
 
   useEffect(() => {
-    setIsAvailable(!!localStorage.getItem('jarvis_sync_passphrase'))
+    setIsAvailable(!!getOrCreateClientId())
   }, [])
 
   async function getKey() {
-    const passphrase = localStorage.getItem('jarvis_sync_passphrase')
-    if (!passphrase) return null
-    return hashPassphrase(passphrase)
+    return getOrCreateClientId()
   }
 
   // Save / overwrite a conversation in blob

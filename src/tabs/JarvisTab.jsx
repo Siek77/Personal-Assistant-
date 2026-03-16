@@ -4,43 +4,19 @@ import { useMemory } from '../context/MemoryContext'
 import { useGoogleDrive } from '../hooks/useGoogleDrive'
 import { useConversations } from '../hooks/useConversations'
 import { useGmail } from '../hooks/useGmail'
+import { getOrCreateClientId } from '../utils/persistence'
 
-// ── Provider configs ───────────────────────────────────────────
-const PROVIDERS = {
-  openrouter: {
-    name: 'OpenRouter',
-    badge: 'PRIMARY',
-    badgeColor: '#8b5cf6',
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    format: 'openai',
-    keyName: 'openrouterApiKey',
-    modelKey: 'openrouterModel',
-    models: [
-      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended)' },
-      { id: 'google/gemini-2.5-flash:free', label: 'Gemini 2.5 Flash (Free tier)' },
-      { id: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash' },
-      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)' },
-    ],
-    signupUrl: 'https://openrouter.ai/keys',
-    signupLabel: 'openrouter.ai → free API key',
-  },
-  groq: {
-    name: 'Groq',
-    badge: 'BACKUP',
-    badgeColor: '#10b981',
-    url: 'https://api.groq.com/openai/v1/chat/completions',
-    format: 'openai',
-    keyName: 'groqApiKey',
-    modelKey: 'groqModel',
-    models: [
-      { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Recommended)' },
-      { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B (Fastest)' },
-      { id: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B' },
-      { id: 'gemma2-9b-it', label: 'Gemma 2 9B' },
-    ],
-    signupUrl: 'https://console.groq.com',
-    signupLabel: 'console.groq.com → free signup',
-  },
+const OPENAI_PROVIDER = {
+  name: 'OpenAI',
+  badge: 'SERVER',
+  badgeColor: '#10b981',
+  modelKey: 'openaiModel',
+  models: [
+    { id: 'gpt-4o-mini', label: 'gpt-4o-mini (Recommended)' },
+    { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+    { id: 'gpt-4.1', label: 'gpt-4.1' },
+    { id: 'gpt-4o', label: 'gpt-4o' },
+  ],
 }
 
 function stripMarkdown(text) {
@@ -59,137 +35,29 @@ function stripMarkdown(text) {
     .trim()
 }
 
-function buildSystemPrompt(settings, memory) {
-  const name = settings.userName || 'User'
-  const facts = memory.facts.map(f => `- ${f.text}`).join('\n') || '(nothing yet)'
-  const routines = memory.routines.map(r => `- ${r.description}`).join('\n') || '(none noted yet)'
-  const topics = memory.recentTopics.join(', ') || 'none yet'
-
-  // Pull calendar + email context from localStorage for the daily brief / general context
-  const now = new Date()
-  const calEvents = (() => {
-    try {
-      const events = JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]')
-      const cutoff = new Date(now.getTime() + 7 * 86400000)
-      return events
-        .filter(e => e.start && new Date(e.start) >= now && new Date(e.start) <= cutoff)
-        .sort((a, b) => new Date(a.start) - new Date(b.start))
-        .slice(0, 10)
-        .map(e => {
-          const d = new Date(e.start)
-          const dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-          const timeStr = e.allDay ? 'all day' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-          return `- ${dateStr} ${timeStr}: ${e.title}${e.location ? ` @ ${e.location}` : ''}`
-        })
-        .join('\n')
-    } catch { return '' }
-  })()
-
-  const emailSummary = (() => {
-    try {
-      const emails = JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]')
-      if (!emails.length) return ''
-      return emails.slice(0, 5).map(e => `- ${e.unread ? '[UNREAD] ' : ''}${e.subject} — from ${e.from}`).join('\n')
-    } catch { return '' }
-  })()
-
-  const weatherContext = (() => {
-    try {
-      const w = JSON.parse(localStorage.getItem('jarvis_weather_cache') || 'null')
-      if (!w) return ''
-      const age = (Date.now() - new Date(w.cachedAt).getTime()) / 60000
-      if (age > 120) return '' // stale after 2 hours
-      return `Current weather: ${w.temp}°F, ${w.desc}.${w.rainChance > 30 ? ` Rain chance today: ${w.rainChance}%.` : ' No significant rain expected.'}`
-    } catch { return '' }
-  })()
-
-  const haContext = (() => {
-    try {
-      const ha = JSON.parse(localStorage.getItem('jarvis_ha_snapshot') || 'null')
-      if (!ha) return ''
-      const age = (Date.now() - new Date(ha.lastUpdated).getTime()) / 60000
-      if (age > 30) return ''
-      const parts = [`${ha.lightsOn} light${ha.lightsOn !== 1 ? 's' : ''} on`]
-      if (ha.temperature != null) parts.push(`thermostat at ${ha.temperature}°`)
-      return `Smart home: ${parts.join(', ')}.`
-    } catch { return '' }
-  })()
-
-  const stocksContext = (() => {
-    try {
-      const stocks = JSON.parse(localStorage.getItem('jarvis_stocks_cache') || '[]')
-      if (!stocks.length) return ''
-      return `Portfolio today: ${stocks.map(s => `${s.symbol} ${(s.changePercent || 0) >= 0 ? '+' : ''}${s.changePercent?.toFixed(1)}%`).join(', ')}.`
-    } catch { return '' }
-  })()
-
-  return `You are JARVIS, a highly intelligent personalized AI assistant — like Tony Stark's JARVIS. You are helpful, witty, precise, and proactive. Address the user as "${name}". Today is ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
-
-What you know about ${name}:
-${facts}
-
-Known routines:
-${routines}
-
-Recent interests: ${topics}
-${calEvents ? `\nUpcoming calendar events:\n${calEvents}` : ''}
-${emailSummary ? `\nRecent emails:\n${emailSummary}` : ''}
-${weatherContext ? `\nLive context:\n- ${weatherContext}` : ''}
-${haContext ? `- ${haContext}` : ''}
-${stocksContext ? `- ${stocksContext}` : ''}
-
-Guidelines:
-- Be concise but thorough. Match the user's energy.
-- Proactively surface relevant info based on what you know.
-- Use a slightly formal but warm tone — sophisticated, not generic.
-- Reference previous context when relevant. You have full conversation history across sessions.
-- Format with markdown (lists, code blocks) when it helps.`
-}
-
-async function callAI(provider, settings, messages, systemPrompt) {
-  const cfg = PROVIDERS[provider]
-  const key = settings[cfg.keyName]
-  const model = cfg.modelKey ? settings[cfg.modelKey] || cfg.models[0]?.id : null
-
-  if (!key) throw new Error(`No ${cfg.name} API key set. Go to Settings → AI.`)
-
-  const res = await fetch(cfg.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'system', content: systemPrompt }, ...messages],
-      max_tokens: 1024,
-      temperature: 0.7,
-    }),
-  })
-  if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || `${cfg.name} error ${res.status}`) }
-  const data = await res.json()
-  return data.choices?.[0]?.message?.content || ''
-}
-
-// Calls OpenRouter (Gemini 2.5 Flash) with automatic Groq fallback
-async function callAIWithFallback(settings, messages, systemPrompt) {
-  const primaryProvider = settings.aiProvider || 'openrouter'
-
+function readJson(key, fallback) {
   try {
-    return await callAI(primaryProvider, settings, messages, systemPrompt)
-  } catch (primaryErr) {
-    // Fall back to Groq if primary fails and Groq is configured
-    if (primaryProvider !== 'groq' && settings.groqApiKey) {
-      console.warn(`[JARVIS] ${primaryErr.message} — falling back to Groq`)
-      return await callAI('groq', settings, messages, systemPrompt)
-    }
-    throw primaryErr
+    return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function buildChatContext() {
+  return {
+    calendarEvents: readJson('jarvis_calendar_events', []),
+    emailSummary: readJson('jarvis_email_summary', []),
+    weatherCache: readJson('jarvis_weather_cache', null),
+    haSnapshot: readJson('jarvis_ha_snapshot', null),
+    stocksCache: readJson('jarvis_stocks_cache', []),
   }
 }
 
 // ── Component ──────────────────────────────────────────────────
 export default function JarvisTab() {
   const { settings, updateSetting } = useSettings()
-  const { memory, addFact, editFact, removeFact, addRoutine, removeRoutine, addTopic, removeTopic, extractMemory } = useMemory()
-  const provider = settings.aiProvider || 'groq'
-  const cfg = PROVIDERS[provider]
+  const { memory, addFact, editFact, removeFact, removeRoutine, addTopic, removeTopic, extractMemory } = useMemory()
+  const cfg = OPENAI_PROVIDER
 
   const drive = useGoogleDrive(settings.googleClientId || null)
   const conversations = useConversations()
@@ -213,7 +81,6 @@ export default function JarvisTab() {
   const [saveStatus, setSaveStatus] = useState('')   // shown in header
   const [saving, setSaving] = useState(false)
   const [driveStatus, setDriveStatus] = useState('')
-  const [driveSaving, setDriveSaving] = useState(false)
   const [factsExpanded, setFactsExpanded] = useState(false)
   const [routinesExpanded, setRoutinesExpanded] = useState(false)
   const [driveConvsExpanded, setDriveConvsExpanded] = useState(false)
@@ -232,8 +99,6 @@ export default function JarvisTab() {
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef(null)
   const messagesEnd = useRef(null)
-  const saveTimerRef = useRef(null)
-
   useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
 
   // Keep localStorage in sync so voice.js can read recent conversation via blob
@@ -270,7 +135,7 @@ export default function JarvisTab() {
         return // don't also load from Drive when blob is available
       }
 
-      // ── Drive fallback (no sync passphrase configured) ──
+      // ── Drive fallback when blob history is unavailable ──
       if (drive.isSignedIn) {
         try {
           setDriveStatus('Loading history…')
@@ -305,11 +170,9 @@ export default function JarvisTab() {
         .catch(e => { setSaveStatus('⚠️ ' + (e.message || 'Save failed')); setTimeout(() => setSaveStatus(''), 6000) })
         .finally(() => setSaving(false))
     } else if (drive.isSignedIn) {
-      setDriveSaving(true)
       drive.saveConversation(convIdRef.current, msgs)
         .then(() => { setDriveStatus('✓ Saved'); setTimeout(() => setDriveStatus(''), 2500) })
         .catch(e => { setDriveStatus('⚠️ ' + (e.message || 'Save failed')); setTimeout(() => setDriveStatus(''), 6000) })
-        .finally(() => setDriveSaving(false))
     }
   }, [conversations.isAvailable, conversations.saveConversation, drive.isSignedIn, drive.saveConversation])
 
@@ -439,16 +302,26 @@ export default function JarvisTab() {
     extractMemory(input.trim(), '')
 
     try {
-      const systemPrompt = buildSystemPrompt(settings, memory)
-      // Include prior session messages as context, then current session
       const apiMessages = [
         ...priorMessagesRef.current,
         ...nextMessages
           .filter(m => m.id !== 'welcome')
           .map(m => ({ role: m.role, content: m.content })),
       ]
-
-      const reply = await callAIWithFallback(settings, apiMessages, systemPrompt)
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: getOrCreateClientId(),
+          messages: apiMessages,
+          settings,
+          memory: JSON.parse(localStorage.getItem('jarvis_memory') || 'null') || memory,
+          context: buildChatContext(),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Chat failed')
+      const reply = data.reply
 
       const assistantMsg = {
         id: Date.now() + 1, role: 'assistant', content: reply,
@@ -478,7 +351,7 @@ export default function JarvisTab() {
     time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
   }])
 
-  const hasKey = !!settings[cfg.keyName]
+  const modelLabel = settings[cfg.modelKey] || cfg.models[0]?.id
 
   return (
     <div className="jarvis-layout" style={{ height: 'calc(100vh - var(--header) - 40px)' }}>
@@ -496,21 +369,9 @@ export default function JarvisTab() {
               </span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 1 }}>
-              {hasKey ? `Using ${settings[cfg.modelKey] || cfg.models[0]?.id || cfg.name}` : `⚠️ No ${cfg.name} key — go to Settings`}
+              {`Using ${modelLabel} through /api/chat`}
             </div>
           </div>
-
-          {/* Provider switcher */}
-          <select
-            value={provider}
-            onChange={e => updateSetting('aiProvider', e.target.value)}
-            className="input provider-select"
-            style={{ width: 'auto', fontSize: 12, padding: '5px 10px', height: 34 }}
-          >
-            {Object.entries(PROVIDERS).map(([id, p]) => (
-              <option key={id} value={id}>{p.name} ({p.badge})</option>
-            ))}
-          </select>
 
           {/* Blob save status */}
           {conversations.isAvailable && (
@@ -570,18 +431,6 @@ export default function JarvisTab() {
           </button>
           <button className="btn btn-ghost btn-sm" onClick={clearChat}>Clear</button>
         </div>
-
-        {/* No key warning */}
-        {!hasKey && (
-          <div style={{ background: 'rgba(245,133,77,0.08)', border: '1px solid rgba(245,133,77,0.25)', borderRadius: 10, padding: '12px 14px', marginBottom: 12, fontSize: 13 }}>
-            <div style={{ fontWeight: 600, color: 'var(--orange)', marginBottom: 4 }}>
-              {cfg.name} API key needed
-            </div>
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.6 }}>
-              Get a free key at <strong style={{ color: 'var(--text3)' }}>{cfg.signupLabel}</strong>, then paste it in <strong>Settings → AI</strong>.
-            </div>
-          </div>
-        )}
 
         {/* Messages */}
         <div className="chat-messages">

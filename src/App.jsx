@@ -12,105 +12,70 @@ import { MemoryProvider } from './context/MemoryContext'
 import { useMemory } from './context/MemoryContext'
 import { SettingsProvider } from './context/SettingsContext'
 import { useSettings } from './context/SettingsContext'
+import { applyPersistedPayload, buildPersistencePayload, getOrCreateClientId } from './utils/persistence'
 import './App.css'
 
-async function hashPassphrase(passphrase) {
-  const encoder = new TextEncoder()
-  const data = encoder.encode('jarvis:' + passphrase)
-  const hash = await crypto.subtle.digest('SHA-256', data)
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-// Auto-push on settings OR memory change (debounced 2s) + auto-pull on mount
-function SyncAutoManager() {
+function PersistenceManager() {
   const { settings, updateSettings } = useSettings()
   const { memory, mergeRemoteMemory } = useMemory()
   const timerRef = useRef(null)
   const isFirstRender = useRef(true)
+  const hydratedRef = useRef(false)
 
-  // Auto-pull on mount if passphrase is set — MERGES memory, never overwrites
   useEffect(() => {
-    const passphrase = localStorage.getItem('jarvis_sync_passphrase')
-    if (!passphrase) return
+    const clientId = getOrCreateClientId()
     ;(async () => {
       try {
-        const key = await hashPassphrase(passphrase)
-        const res = await fetch(`/api/sync?key=${key}`)
+        const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
         const { data } = await res.json()
-        if (!data?.settings) return
-        updateSettings(data.settings)
-        if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
-        if (data.memory) mergeRemoteMemory(data.memory)
-        if (data.savedAt) localStorage.setItem('jarvis_last_synced', data.savedAt)
-      } catch {}
+        applyPersistedPayload(data, { updateSettings, mergeRemoteMemory })
+      } catch {
+        // Ignore bootstrap sync issues and keep local state usable.
+      } finally {
+        hydratedRef.current = true
+      }
     })()
   }, [])
 
-  // Shared sync helper — used by calendar + email event listeners
-  const syncNow = useCallback(async () => {
-    const passphrase = localStorage.getItem('jarvis_sync_passphrase')
-    if (!passphrase) return
+  const persistNow = useCallback(async () => {
+    const clientId = getOrCreateClientId()
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(async () => {
       try {
-        const key = await hashPassphrase(passphrase)
-        const payload = {
-          settings,
-          esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
-          memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
-          recentConv: JSON.parse(localStorage.getItem('jarvis_recent_conv') || '[]'),
-          calendarEvents: JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]'),
-          emailSummary: JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]'),
-        }
-        const res = await fetch(`/api/sync?key=${key}`, {
+        const payload = buildPersistencePayload(settings, memory)
+        const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
         const { savedAt } = await res.json()
         if (savedAt) localStorage.setItem('jarvis_last_synced', savedAt)
-      } catch {}
+      } catch {
+        // Keep the app responsive even if persistence is temporarily unavailable.
+      }
     }, 2000)
-  }, [settings])
-
-  // Sync when calendar or email events change
-  useEffect(() => {
-    window.addEventListener('jarvis:calendar-updated', syncNow)
-    window.addEventListener('jarvis:email-updated', syncNow)
-    return () => {
-      window.removeEventListener('jarvis:calendar-updated', syncNow)
-      window.removeEventListener('jarvis:email-updated', syncNow)
-    }
-  }, [syncNow])
-
-  // Auto-push on settings OR memory change (debounced 2s, skip initial render)
-  useEffect(() => {
-    if (isFirstRender.current) { isFirstRender.current = false; return }
-    const passphrase = localStorage.getItem('jarvis_sync_passphrase')
-    if (!passphrase) return
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(async () => {
-      try {
-        const key = await hashPassphrase(passphrase)
-        const payload = {
-          settings,
-          esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
-          memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
-          recentConv: JSON.parse(localStorage.getItem('jarvis_recent_conv') || '[]'),
-          calendarEvents: JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]'),
-          emailSummary: JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]'),
-        }
-        const res = await fetch(`/api/sync?key=${key}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-        const { savedAt } = await res.json()
-        if (savedAt) localStorage.setItem('jarvis_last_synced', savedAt)
-      } catch {}
-    }, 2000)
-    return () => clearTimeout(timerRef.current)
   }, [settings, memory])
+
+  useEffect(() => {
+    const events = [
+      'jarvis:calendar-updated',
+      'jarvis:email-updated',
+      'jarvis:weather-updated',
+      'jarvis:ha-updated',
+      'jarvis:stocks-updated',
+    ]
+    events.forEach(eventName => window.addEventListener(eventName, persistNow))
+    return () => {
+      events.forEach(eventName => window.removeEventListener(eventName, persistNow))
+    }
+  }, [persistNow])
+
+  useEffect(() => {
+    if (!hydratedRef.current) return
+    if (isFirstRender.current) { isFirstRender.current = false; return }
+    persistNow()
+    return () => clearTimeout(timerRef.current)
+  }, [settings, memory, persistNow])
 
   return null
 }
@@ -132,7 +97,7 @@ export default function App() {
   return (
     <SettingsProvider>
       <MemoryProvider>
-        <SyncAutoManager />
+        <PersistenceManager />
         <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
           {activeTab === 'jarvis'    && <JarvisTab />}
           {activeTab === 'weather'   && <WeatherTab />}
