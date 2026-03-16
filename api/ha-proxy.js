@@ -16,8 +16,13 @@ export default async function handler(req, res) {
 
   const forwardHeaders = { 'Content-Type': 'application/json' }
   if (req.headers.authorization) forwardHeaders['Authorization'] = req.headers.authorization
-  if (req.headers['cf-access-client-id']) forwardHeaders['CF-Access-Client-Id'] = req.headers['cf-access-client-id']
-  if (req.headers['cf-access-client-secret']) forwardHeaders['CF-Access-Client-Secret'] = req.headers['cf-access-client-secret']
+
+  // CF Access service token: prefer headers forwarded from browser settings,
+  // fall back to Vercel env vars (CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET)
+  const cfId = req.headers['cf-access-client-id'] || process.env.CF_ACCESS_CLIENT_ID
+  const cfSecret = req.headers['cf-access-client-secret'] || process.env.CF_ACCESS_CLIENT_SECRET
+  if (cfId) forwardHeaders['CF-Access-Client-Id'] = cfId
+  if (cfSecret) forwardHeaders['CF-Access-Client-Secret'] = cfSecret
 
   const isBodyMethod = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH'
 
