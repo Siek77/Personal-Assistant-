@@ -745,6 +745,23 @@ function CustomWidget({ config }) {
 }
 
 // ── StocksWidget ───────────────────────────────────────────────────────────────
+// Fetch a single ticker directly from Yahoo Finance v8/chart (browser-side, CORS allowed).
+async function fetchTickerDirect(sym) {
+  const r = await fetch(
+    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`,
+    { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) }
+  )
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  const json = await r.json()
+  const meta = json.chart?.result?.[0]?.meta
+  if (!meta?.regularMarketPrice) throw new Error('no data')
+  const price = meta.regularMarketPrice
+  const prev  = meta.chartPreviousClose ?? meta.previousClose ?? price
+  const change        = price - prev
+  const changePercent = prev ? (change / prev) * 100 : 0
+  return { symbol: meta.symbol, name: meta.shortName || meta.longName || sym, price, change, changePercent }
+}
+
 function StocksWidget({ watchedStocks }) {
   const [quotes, setQuotes] = useState([])
   const [loading, setLoading] = useState(false)
@@ -756,14 +773,31 @@ function StocksWidget({ watchedStocks }) {
   const fetchQuotes = async () => {
     if (!symbols) return
     setLoading(true); setError(null)
+    const list = symbols.split(',').map(s => s.trim()).filter(Boolean)
+
     try {
-      const r = await fetch(`/api/stocks?symbols=${encodeURIComponent(symbols)}`)
-      const data = await r.json()
-      if (!r.ok) throw new Error(data.error || 'Failed')
-      setQuotes(data.quotes || [])
+      // ── Attempt 1: server-side proxy (works in production)
+      let finalQuotes = null
+      try {
+        const r = await fetch(`/api/stocks?symbols=${encodeURIComponent(symbols)}`, { signal: AbortSignal.timeout(10000) })
+        const data = await r.json()
+        if (r.ok && data.quotes?.length > 0) finalQuotes = data.quotes
+      } catch { /* proxy unavailable in local dev — fall through */ }
+
+      // ── Attempt 2: direct browser fetch (Yahoo Finance allows CORS for v8/chart)
+      if (!finalQuotes) {
+        const results = await Promise.allSettled(list.map(fetchTickerDirect))
+        const good = results.filter(r => r.status === 'fulfilled').map(r => r.value)
+        if (good.length > 0) finalQuotes = good
+        else {
+          const errs = results.map(r => r.reason?.message).filter(Boolean)
+          throw new Error(errs[0] || 'All tickers failed')
+        }
+      }
+
+      setQuotes(finalQuotes)
       setLastFetched(new Date())
-      // Cache for Daily Brief + JARVIS context
-      try { localStorage.setItem('jarvis_stocks_cache', JSON.stringify(data.quotes || [])) } catch {}
+      try { localStorage.setItem('jarvis_stocks_cache', JSON.stringify(finalQuotes)) } catch {}
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
