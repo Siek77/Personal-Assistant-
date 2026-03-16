@@ -1,16 +1,28 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
 
+async function hashPassphrase(passphrase) {
+  const encoder = new TextEncoder()
+  const data = encoder.encode('jarvis:' + passphrase)
+  const hash = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 const SECTIONS = [
-  { id: 'profile', label: '👤 Profile', icon: '👤' },
-  { id: 'ai', label: '🤖 AI', icon: '🤖' },
-  { id: 'spotify', label: '🎵 Spotify', icon: '🎵' },
-  { id: 'esp32', label: '📡 ESP32', icon: '📡' },
-  { id: 'services', label: '🔌 Services', icon: '🔌' },
-  { id: 'appearance', label: '🎨 Look', icon: '🎨' },
-  { id: 'memory', label: '🧠 Memory', icon: '🧠' },
-  { id: 'sync', label: '☁️ Sync', icon: '☁️' },
+  { id: 'profile',    label: '👤 Profile',    icon: '👤' },
+  { id: 'ai',         label: '🤖 AI',         icon: '🤖' },
+  { id: 'spotify',    label: '🎵 Spotify',    icon: '🎵' },
+  { id: 'esp32',      label: '📡 ESP32',      icon: '📡' },
+  { id: 'home',       label: '🏠 Home',       icon: '🏠' },
+  { id: 'calendar',   label: '📅 Calendar',   icon: '📅' },
+  { id: 'notion',     label: '📝 Notion',     icon: '📝' },
+  { id: 'uptime',     label: '🟢 Uptime',     icon: '🟢' },
+  { id: 'services',   label: '🔌 Services',   icon: '🔌' },
+  { id: 'stocks',     label: '📈 Stocks',     icon: '📈' },
+  { id: 'appearance', label: '🎨 Look',       icon: '🎨' },
+  { id: 'memory',     label: '🧠 Memory',     icon: '🧠' },
+  { id: 'sync',       label: '☁️ Sync',       icon: '☁️' },
 ]
 
 function ToggleSetting({ label, desc, value, onChange }) {
@@ -56,13 +68,73 @@ function InputSetting({ label, desc, value, onChange, type = 'text', placeholder
   )
 }
 
+function UptimeUrlsEditor({ value, onChange }) {
+  let urls = []
+  try { urls = JSON.parse(value || '[]') } catch {}
+  const [list, setList] = useState(urls)
+  const [newLabel, setNewLabel] = useState('')
+  const [newUrl, setNewUrl] = useState('')
+
+  const commit = (next) => {
+    setList(next)
+    onChange(JSON.stringify(next))
+  }
+
+  const add = () => {
+    if (!newUrl.trim()) return
+    const url = newUrl.trim().startsWith('http') ? newUrl.trim() : 'https://' + newUrl.trim()
+    commit([...list, { label: newLabel.trim() || url, url }])
+    setNewLabel('')
+    setNewUrl('')
+  }
+
+  const remove = (i) => commit(list.filter((_, j) => j !== i))
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+        {list.map((item, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 8 }}>
+            <span style={{ fontSize: 12, flex: 1, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <strong>{item.label}</strong> <span style={{ color: 'var(--text2)', fontSize: 11 }}>{item.url}</span>
+            </span>
+            <button className="btn btn-ghost btn-sm" onClick={() => remove(i)} style={{ color: '#ef4444', fontSize: 11 }}>✕</button>
+          </div>
+        ))}
+        {list.length === 0 && <div style={{ fontSize: 12, color: 'var(--text2)' }}>No URLs added yet.</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          placeholder="Label (e.g. My App)"
+          value={newLabel}
+          onChange={e => setNewLabel(e.target.value)}
+          style={{ fontSize: 13, flex: '1 1 120px' }}
+        />
+        <input
+          className="input"
+          placeholder="https://example.com"
+          value={newUrl}
+          onChange={e => setNewUrl(e.target.value)}
+          style={{ fontSize: 13, flex: '2 1 200px' }}
+          onKeyDown={e => e.key === 'Enter' && add()}
+        />
+        <button className="btn btn-primary btn-sm" onClick={add} style={{ flexShrink: 0 }}>Add</button>
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsTab() {
   const { settings, updateSetting, updateSettings } = useSettings()
-  const { memory, clearMemory } = useMemory()
+  const { memory, clearMemory, mergeRemoteMemory } = useMemory()
   const [activeSection, setActiveSection] = useState('profile')
   const [saved, setSaved] = useState(false)
   const [syncStatus, setSyncStatus] = useState('')
-  const [importText, setImportText] = useState('')
+  const [syncPassphrase, setSyncPassphrase] = useState(() => localStorage.getItem('jarvis_sync_passphrase') || '')
+  const [lastSynced, setLastSynced] = useState(() => localStorage.getItem('jarvis_last_synced') || '')
+  const [syncing, setSyncing] = useState(false)
+  const syncTimerRef = useRef(null)
 
   const save = (key, val) => {
     updateSetting(key, val)
@@ -70,39 +142,69 @@ export default function SettingsTab() {
     setTimeout(() => setSaved(false), 1500)
   }
 
-  const exportData = () => {
-    const data = {
-      settings,
-      esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
-      memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
-      version: 1,
-      exportedAt: new Date().toISOString(),
-    }
-    const encoded = btoa(JSON.stringify(data))
-    navigator.clipboard.writeText(encoded).then(() => {
-      setSyncStatus('✓ Copied to clipboard! Paste on any device to sync.')
-      setTimeout(() => setSyncStatus(''), 4000)
-    }).catch(() => {
-      setSyncStatus(encoded) // fallback: show it
-    })
+  const savePassphrase = (val) => {
+    setSyncPassphrase(val)
+    localStorage.setItem('jarvis_sync_passphrase', val)
   }
 
-  const importData = () => {
+  const buildPayload = () => ({
+    settings,
+    esp32: JSON.parse(localStorage.getItem('jarvis_esp32') || '[]'),
+    memory: JSON.parse(localStorage.getItem('jarvis_memory') || '{}'),
+  })
+
+  const pushSync = async (passphrase = syncPassphrase) => {
+    if (!passphrase.trim()) return
+    setSyncing(true)
     try {
-      const raw = importText.trim()
-      const data = JSON.parse(atob(raw))
-      if (!data.settings) throw new Error('Invalid sync code')
-      updateSettings(data.settings)
-      if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
-      if (data.memory) localStorage.setItem('jarvis_memory', JSON.stringify(data.memory))
-      setImportText('')
-      setSyncStatus('✓ Settings imported! Reload to apply all changes.')
-      setTimeout(() => setSyncStatus(''), 5000)
+      const key = await hashPassphrase(passphrase.trim())
+      const res = await fetch(`/api/sync?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildPayload()),
+      })
+      const { savedAt } = await res.json()
+      localStorage.setItem('jarvis_last_synced', savedAt)
+      setLastSynced(savedAt)
+      setSyncStatus('✓ Synced to cloud!')
     } catch {
-      setSyncStatus('✗ Invalid sync code. Make sure you copied the full text.')
+      setSyncStatus('✗ Sync failed — check your connection.')
+    } finally {
+      setSyncing(false)
       setTimeout(() => setSyncStatus(''), 4000)
     }
   }
+
+  const pullSync = async (passphrase = syncPassphrase) => {
+    if (!passphrase.trim()) return
+    setSyncing(true)
+    try {
+      const key = await hashPassphrase(passphrase.trim())
+      const res = await fetch(`/api/sync?key=${key}`)
+      const { data } = await res.json()
+      if (!data?.settings) { setSyncStatus('✗ No data found for this passphrase.'); return }
+      updateSettings(data.settings)
+      if (data.esp32) localStorage.setItem('jarvis_esp32', JSON.stringify(data.esp32))
+      if (data.memory) mergeRemoteMemory(data.memory)
+      const ts = data.savedAt || new Date().toISOString()
+      localStorage.setItem('jarvis_last_synced', ts)
+      setLastSynced(ts)
+      setSyncStatus('✓ Settings pulled! Reload to apply all changes.')
+    } catch {
+      setSyncStatus('✗ Pull failed — check your connection.')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncStatus(''), 5000)
+    }
+  }
+
+  // Debounced auto-push on settings change
+  useEffect(() => {
+    if (!syncPassphrase.trim()) return
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
+    syncTimerRef.current = setTimeout(() => pushSync(), 2000)
+    return () => clearTimeout(syncTimerRef.current)
+  }, [settings])
 
   return (
     <div className="settings-shell">
@@ -149,10 +251,8 @@ export default function SettingsTab() {
                   <div className="settings-label">Active Provider</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, width: '100%' }}>
                     {[
-                      { id: 'groq', name: 'Groq', badge: 'FREE', color: '#10b981', desc: 'Llama 3.3 · Super fast' },
-                      { id: 'gemini', name: 'Gemini', badge: 'FREE', color: '#10b981', desc: 'Google · 1M tokens/day' },
-                      { id: 'openrouter', name: 'OpenRouter', badge: 'FREE', color: '#8b5cf6', desc: 'Many free models' },
-                      { id: 'claude', name: 'Claude', badge: 'PAID', color: '#f97316', desc: 'Anthropic · Most capable' },
+                      { id: 'openrouter', name: 'OpenRouter', badge: 'PRIMARY', color: '#8b5cf6', desc: 'Gemini 2.5 Flash · Best value' },
+                      { id: 'groq', name: 'Groq', badge: 'BACKUP', color: '#10b981', desc: 'Llama 3.3 · Auto-fallback' },
                     ].map(p => {
                       const active = (settings.aiProvider || 'groq') === p.id
                       return (
@@ -179,8 +279,25 @@ export default function SettingsTab() {
 
                 <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
 
+                {/* OpenRouter */}
+                {(settings.aiProvider || 'openrouter') === 'openrouter' && <>
+                  <InputSetting label="OpenRouter API Key" desc="Get at openrouter.ai/keys — pay-per-use, no subscription" value={settings.openrouterApiKey || ''} onChange={v => save('openrouterApiKey', v)} type="password" placeholder="sk-or-..." />
+                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                    <div className="settings-label">Model</div>
+                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.openrouterModel || 'google/gemini-2.5-flash'} onChange={e => save('openrouterModel', e.target.value)}>
+                      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
+                      <option value="google/gemini-2.5-flash:free">Gemini 2.5 Flash (Free tier)</option>
+                      <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
+                      <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (Free)</option>
+                    </select>
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
+                    <strong style={{ color: 'var(--text)' }}>Gemini 2.5 Flash</strong> — ~$0.30/M input · $2.50/M output. If this fails, JARVIS automatically falls back to Groq.
+                  </div>
+                </>}
+
                 {/* Groq */}
-                {(settings.aiProvider || 'groq') === 'groq' && <>
+                {settings.aiProvider === 'groq' && <>
                   <InputSetting label="Groq API Key" desc="Free at console.groq.com — no credit card needed" value={settings.groqApiKey || ''} onChange={v => save('groqApiKey', v)} type="password" placeholder="gsk_..." />
                   <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
                     <div className="settings-label">Model</div>
@@ -193,39 +310,12 @@ export default function SettingsTab() {
                   </div>
                 </>}
 
-                {/* Gemini */}
-                {settings.aiProvider === 'gemini' && <>
-                  <InputSetting label="Gemini API Key" desc="Free at aistudio.google.com/app/apikey — 15 req/min, 1M tokens/day" value={settings.geminiApiKey || ''} onChange={v => save('geminiApiKey', v)} type="password" placeholder="AIza..." />
-                  <div style={{ padding: '8px 12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
-                    Uses <strong style={{ color: 'var(--text)' }}>Gemini 1.5 Flash</strong> — Google's fastest free model.
+                {/* Groq backup key (always shown when OpenRouter is active) */}
+                {(settings.aiProvider || 'openrouter') === 'openrouter' && (
+                  <div style={{ marginTop: 8 }}>
+                    <InputSetting label="Groq API Key (Fallback)" desc="Optional — JARVIS auto-switches to Groq if OpenRouter fails" value={settings.groqApiKey || ''} onChange={v => save('groqApiKey', v)} type="password" placeholder="gsk_..." />
                   </div>
-                </>}
-
-                {/* OpenRouter */}
-                {settings.aiProvider === 'openrouter' && <>
-                  <InputSetting label="OpenRouter API Key" desc="Free at openrouter.ai/keys — access many free models" value={settings.openrouterApiKey || ''} onChange={v => save('openrouterApiKey', v)} type="password" placeholder="sk-or-..." />
-                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                    <div className="settings-label">Model</div>
-                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free'} onChange={e => save('openrouterModel', e.target.value)}>
-                      <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (Free)</option>
-                      <option value="google/gemma-3-27b-it:free">Gemma 3 27B (Free)</option>
-                      <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (Free)</option>
-                    </select>
-                  </div>
-                </>}
-
-                {/* Claude */}
-                {settings.aiProvider === 'claude' && <>
-                  <InputSetting label="Claude API Key" desc="Paid — get at console.anthropic.com" value={settings.claudeApiKey || ''} onChange={v => save('claudeApiKey', v)} type="password" placeholder="sk-ant-..." />
-                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                    <div className="settings-label">Model</div>
-                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.claudeModel || 'claude-sonnet-4-6'} onChange={e => save('claudeModel', e.target.value)}>
-                      <option value="claude-opus-4-6">Claude Opus 4.6 (Best)</option>
-                      <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Balanced)</option>
-                      <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
-                    </select>
-                  </div>
-                </>}
+                )}
 
                 <div style={{ marginTop: 12, padding: 10, background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
                   All keys are stored only in your browser's localStorage and sent directly to the provider — never to any third party.
@@ -286,6 +376,150 @@ export default function SettingsTab() {
               </div>
             )}
 
+            {/* Home Assistant */}
+            {activeSection === 'home' && (
+              <div className="settings-section">
+                <h3>Home Assistant / HomeKit / Matter</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Connect to a <strong>Home Assistant</strong> instance to control HomeKit devices, Matter accessories, Zigbee/Z-Wave sensors, and any other smart home gear.
+                </p>
+                <InputSetting
+                  label="Home Assistant URL"
+                  desc="Your HA instance URL — must be reachable from your browser (local or via Nabu Casa / Cloudflare Tunnel)"
+                  value={settings.haUrl || ''}
+                  onChange={v => save('haUrl', v)}
+                  placeholder="http://homeassistant.local:8123"
+                />
+                <InputSetting
+                  label="Long-Lived Access Token"
+                  desc="Profile → Long-Lived Access Tokens → Create Token in Home Assistant"
+                  value={settings.haToken || ''}
+                  onChange={v => save('haToken', v)}
+                  type="password"
+                  placeholder="eyJ..."
+                />
+                <InputSetting
+                  label="Cloudflare Access Client ID"
+                  desc="Optional — if HA is behind Cloudflare Access. Zero Trust → Service Auth → Service Tokens."
+                  value={settings.cfClientId || ''}
+                  onChange={v => save('cfClientId', v)}
+                  placeholder="abc123.access"
+                />
+                <InputSetting
+                  label="Cloudflare Access Client Secret"
+                  desc="The secret from the same Cloudflare service token."
+                  value={settings.cfClientSecret || ''}
+                  onChange={v => save('cfClientSecret', v)}
+                  type="password"
+                  placeholder="••••••••"
+                />
+                <div style={{ marginTop: 16, padding: 12, background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--orange)', marginBottom: 8 }}>CORS Configuration Required</div>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                    Add to your HA <code style={{ fontSize: 11, background: 'var(--bg3)', padding: '1px 4px', borderRadius: 3 }}>configuration.yaml</code>:
+                    <pre style={{ marginTop: 8, padding: '10px 12px', background: 'var(--bg2)', borderRadius: 6, fontSize: 11, overflowX: 'auto' }}>{`http:
+  cors_allowed_origins:
+    - https://jarvis-dashboard-fawn.vercel.app`}</pre>
+                  </div>
+                </div>
+                <div style={{ marginTop: 10, padding: 12, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                  <strong style={{ color: '#ef4444' }}>iPad / iOS Safari:</strong> This app runs on <code style={{ background: 'var(--bg3)', padding: '1px 4px', borderRadius: 3 }}>https://</code> — iOS blocks all <code>http://</code> requests as mixed content. You must use an <strong>https:// URL</strong> for HA (Nabu Casa, Cloudflare Tunnel, or self-signed cert). A plain <code>http://</code> local address will only work on desktop.
+                </div>
+              </div>
+            )}
+
+            {/* Calendar */}
+            {activeSection === 'calendar' && (
+              <div className="settings-section">
+                <h3>Calendar</h3>
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#4285f4' }}>Google Calendar</h4>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.6 }}>
+                    Uses the same Google OAuth Client ID as Google Drive (Settings → Sync). Make sure the <strong>Google Calendar API</strong> is enabled in your Google Cloud project.
+                    The Calendar tab will prompt you to sign in with a <code style={{ fontSize: 11 }}>calendar.readonly</code> scope.
+                  </p>
+                  <div style={{ padding: 10, background: 'rgba(66,133,244,0.08)', border: '1px solid rgba(66,133,244,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                    Enable the Calendar API: <strong>console.cloud.google.com → APIs & Services → Library → Google Calendar API → Enable</strong>
+                  </div>
+                </div>
+
+                <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
+
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: 'var(--text)' }}>Apple Calendar (iCloud CalDAV)</h4>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.6 }}>
+                    Reads your iCloud calendars via CalDAV. Requires an <strong>App-Specific Password</strong> — your main Apple ID password won't work here.
+                  </p>
+                  <InputSetting
+                    label="Apple ID Email"
+                    value={settings.calDavEmail || ''}
+                    onChange={v => save('calDavEmail', v)}
+                    placeholder="you@icloud.com"
+                  />
+                  <InputSetting
+                    label="App-Specific Password"
+                    desc="Create at appleid.apple.com → Sign-In and Security → App-Specific Passwords"
+                    value={settings.calDavPassword || ''}
+                    onChange={v => save('calDavPassword', v)}
+                    type="password"
+                    placeholder="xxxx-xxxx-xxxx-xxxx"
+                  />
+                  <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+                    Credentials are sent to the /api/apple-calendar proxy only when you load calendars — never stored server-side.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Notion */}
+            {activeSection === 'notion' && (
+              <div className="settings-section">
+                <h3>Notion</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Show a Notion database as a widget on the Dashboard. Uses an <strong>Internal Integration</strong> token for read access.
+                </p>
+                <InputSetting
+                  label="Notion API Key"
+                  desc="Create an Internal Integration at notion.so/my-integrations and copy the secret"
+                  value={settings.notionApiKey || ''}
+                  onChange={v => save('notionApiKey', v)}
+                  type="password"
+                  placeholder="secret_..."
+                />
+                <InputSetting
+                  label="Database ID"
+                  desc="From the database page URL: notion.so/username/DATABASE_ID?v=..."
+                  value={settings.notionDatabaseId || ''}
+                  onChange={v => save('notionDatabaseId', v)}
+                  placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                />
+                <div style={{ marginTop: 16, padding: 12, background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Setup</div>
+                  <ol style={{ fontSize: 12, color: 'var(--text2)', paddingLeft: 16, lineHeight: 1.8 }}>
+                    <li>Go to <strong>notion.so/my-integrations</strong> → New integration</li>
+                    <li>Give it a name, select read content, copy the Internal Integration Token</li>
+                    <li>Open the Notion database you want to show</li>
+                    <li>Click ⋯ → Connections → Connect your integration</li>
+                    <li>Copy the database ID from the URL</li>
+                  </ol>
+                </div>
+              </div>
+            )}
+
+            {/* Uptime */}
+            {activeSection === 'uptime' && (
+              <div className="settings-section">
+                <h3>Uptime Monitor</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Add URLs to monitor. The Dashboard will show live status (up/down) and response times.
+                </p>
+                <UptimeUrlsEditor
+                  value={settings.uptimeUrls || '[]'}
+                  onChange={v => save('uptimeUrls', v)}
+                />
+              </div>
+            )}
+
             {/* Services */}
             {activeSection === 'services' && (
               <div className="settings-section">
@@ -312,6 +546,34 @@ export default function SettingsTab() {
               </div>
             )}
 
+            {/* Stocks */}
+            {activeSection === 'stocks' && (
+              <div className="settings-section">
+                <h3>Stock Tracker</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Enter the tickers you want to track. These will appear in the Stocks dashboard widget, Daily Brief, and JARVIS context. Data is fetched via Yahoo Finance — no API key required.
+                </p>
+                <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+                  <div className="settings-label">Watched Tickers</div>
+                  <div className="settings-desc">Comma-separated. Use Yahoo Finance symbols — stocks (AAPL), crypto (BTC-USD), ETFs (SPY), indices (^GSPC)</div>
+                  <input
+                    className="input"
+                    value={settings.watchedStocks || ''}
+                    onChange={e => save('watchedStocks', e.target.value)}
+                    placeholder="AAPL,MSFT,TSLA,BTC-USD,SPY"
+                    style={{ fontSize: 13, width: '100%' }}
+                  />
+                </div>
+                <div style={{ marginTop: 16, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                  <strong style={{ color: 'var(--text3)' }}>Examples:</strong><br />
+                  Stocks: <code style={{ fontSize: 11 }}>AAPL, MSFT, TSLA, NVDA, AMZN</code><br />
+                  Crypto: <code style={{ fontSize: 11 }}>BTC-USD, ETH-USD, SOL-USD</code><br />
+                  ETFs: <code style={{ fontSize: 11 }}>SPY, QQQ, VTI</code><br />
+                  Indices: <code style={{ fontSize: 11 }}>^GSPC (S&P 500), ^DJI (Dow), ^IXIC (Nasdaq)</code>
+                </div>
+              </div>
+            )}
+
             {/* Appearance */}
             {activeSection === 'appearance' && (
               <div className="settings-section">
@@ -322,23 +584,75 @@ export default function SettingsTab() {
                   value={settings.scanlineEffect !== false}
                   onChange={v => save('scanlineEffect', v)}
                 />
+                {/* Primary Color */}
                 <div className="settings-row">
                   <div>
-                    <div className="settings-label">Color Accent</div>
-                    <div className="settings-desc">Primary interface color (requires refresh)</div>
+                    <div className="settings-label">Primary Color</div>
+                    <div className="settings-desc">Main accent — buttons, active states, links</div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {['#3b82f6', '#06b6d4', '#10b981', '#8b5cf6', '#f97316'].map(c => (
-                      <div
-                        key={c}
-                        style={{
-                          width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                          border: settings.accentColor === c ? '2px solid white' : '2px solid transparent',
-                          boxShadow: settings.accentColor === c ? `0 0 8px ${c}` : 'none',
-                        }}
-                        onClick={() => save('accentColor', c)}
-                      />
-                    ))}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: '50%',
+                      background: settings.primaryColor || '#3b82f6',
+                      border: '2px solid var(--border2)',
+                      boxShadow: `0 0 10px ${settings.primaryColor || '#3b82f6'}66`,
+                      flexShrink: 0,
+                    }} />
+                    <input
+                      type="color"
+                      value={settings.primaryColor || '#3b82f6'}
+                      onChange={e => save('primaryColor', e.target.value)}
+                      style={{
+                        width: 44, height: 34, border: '1px solid var(--border)',
+                        borderRadius: 8, cursor: 'pointer', background: 'var(--bg3)',
+                        padding: 2,
+                      }}
+                      title="Pick primary color"
+                    />
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => save('primaryColor', '#3b82f6')}
+                      title="Reset to default"
+                      style={{ fontSize: 11 }}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                {/* Secondary Color */}
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-label">Secondary Color</div>
+                    <div className="settings-desc">Secondary accent — memory, dashboard highlights</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: '50%',
+                      background: settings.secondaryColor || '#8b5cf6',
+                      border: '2px solid var(--border2)',
+                      boxShadow: `0 0 10px ${settings.secondaryColor || '#8b5cf6'}66`,
+                      flexShrink: 0,
+                    }} />
+                    <input
+                      type="color"
+                      value={settings.secondaryColor || '#8b5cf6'}
+                      onChange={e => save('secondaryColor', e.target.value)}
+                      style={{
+                        width: 44, height: 34, border: '1px solid var(--border)',
+                        borderRadius: 8, cursor: 'pointer', background: 'var(--bg3)',
+                        padding: 2,
+                      }}
+                      title="Pick secondary color"
+                    />
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => save('secondaryColor', '#8b5cf6')}
+                      title="Reset to default"
+                      style={{ fontSize: 11 }}
+                    >
+                      Reset
+                    </button>
                   </div>
                 </div>
               </div>
@@ -397,61 +711,97 @@ export default function SettingsTab() {
             {/* Sync */}
             {activeSection === 'sync' && (
               <div className="settings-section">
-                <h3>Sync Across Devices</h3>
+                <h3>Cloud Sync</h3>
                 <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-                  Export all your settings, API keys, ESP32 devices, and memory into a portable sync code. Paste it on any other device to instantly sync everything.
+                  Keep settings, API keys, ESP32 devices, and JARVIS memory in sync across all your devices automatically. Choose any passphrase — only you can access your data.
                 </p>
 
-                {/* Export */}
+                {/* Passphrase */}
                 <div style={{ marginBottom: 20 }}>
-                  <div className="settings-label" style={{ marginBottom: 8 }}>Export Settings</div>
+                  <div className="settings-label" style={{ marginBottom: 6 }}>Sync Passphrase</div>
                   <div className="settings-desc" style={{ marginBottom: 10 }}>
-                    Copies a sync code to your clipboard. Open JARVIS on another device → Settings → Sync → paste it in the Import box below.
+                    Pick any passphrase. It's hashed (SHA-256) before use as a storage key — never stored on the server. Use the same passphrase on all your devices.
                   </div>
-                  <button className="btn btn-primary" onClick={exportData} style={{ width: '100%' }}>
-                    📤 Copy Sync Code to Clipboard
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      className="input"
+                      type="password"
+                      placeholder="e.g. my-jarvis-secret"
+                      value={syncPassphrase}
+                      onChange={e => savePassphrase(e.target.value)}
+                      style={{ fontSize: 13, flex: 1 }}
+                    />
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => pushSync()}
+                    disabled={!syncPassphrase.trim() || syncing}
+                    style={{ flex: 1 }}
+                  >
+                    {syncing ? '⏳ Syncing…' : '☁️ Sync Now'}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => pullSync()}
+                    disabled={!syncPassphrase.trim() || syncing}
+                    style={{ flex: 1 }}
+                  >
+                    ⬇️ Pull from Cloud
                   </button>
                 </div>
 
-                {/* Import */}
-                <div style={{ marginBottom: 16 }}>
-                  <div className="settings-label" style={{ marginBottom: 8 }}>Import Settings</div>
-                  <div className="settings-desc" style={{ marginBottom: 10 }}>
-                    Paste a sync code exported from another device.
+                {lastSynced && (
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12 }}>
+                    Last synced: {new Date(lastSynced).toLocaleString()}
                   </div>
-                  <textarea
-                    className="input"
-                    rows={3}
-                    placeholder="Paste sync code here..."
-                    value={importText}
-                    onChange={e => setImportText(e.target.value)}
-                    style={{ fontSize: 12, fontFamily: 'monospace', marginBottom: 8 }}
-                  />
-                  <button
-                    className="btn btn-green"
-                    onClick={importData}
-                    disabled={!importText.trim()}
-                    style={{ width: '100%' }}
-                  >
-                    📥 Import & Apply
-                  </button>
-                </div>
+                )}
 
                 {syncStatus && (
                   <div style={{
                     padding: '10px 14px',
-                    background: syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.1)' : syncStatus.startsWith('✗') ? 'rgba(239,68,68,0.1)' : 'var(--bg3)',
-                    border: `1px solid ${syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.3)' : syncStatus.startsWith('✗') ? 'rgba(239,68,68,0.3)' : 'var(--border)'}`,
-                    borderRadius: 8, fontSize: 12, color: 'var(--text)',
-                    wordBreak: 'break-all', fontFamily: syncStatus.startsWith('ey') || syncStatus.length > 80 ? 'monospace' : 'inherit',
-                    lineHeight: 1.6,
+                    background: syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                    border: `1px solid ${syncStatus.startsWith('✓') ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                    borderRadius: 8, fontSize: 12, color: 'var(--text)', lineHeight: 1.6,
                   }}>
                     {syncStatus}
                   </div>
                 )}
 
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--text3)' }}>Privacy note:</strong> The sync code is a local base64 string — nothing is sent to any server. Transfer it yourself via AirDrop, iCloud Notes, email, or any messaging app.
+                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> Your passphrase is hashed client-side with SHA-256 before being used as a key. The server never sees your passphrase. Settings auto-push 2 seconds after any change (if passphrase is set).
+                </div>
+
+                {/* Google Drive — conversation history */}
+                <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>🗂️ Google Drive — Conversation History</h4>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 14, lineHeight: 1.6 }}>
+                    Saves every JARVIS conversation to your Google Drive (private app folder). On each new session, the last 3 conversations are loaded so JARVIS has full continuity across time and devices.
+                  </p>
+
+                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginBottom: 14 }}>
+                    <div className="settings-label">Google OAuth Client ID</div>
+                    <div className="settings-desc">
+                      Create a project at <strong>console.cloud.google.com</strong> → Enable Drive API → Credentials → OAuth 2.0 Web Client → add <code style={{ fontSize: 11, background: 'var(--bg3)', padding: '1px 4px', borderRadius: 3 }}>https://jarvis-dashboard-fawn.vercel.app</code> as authorized origin → paste Client ID here.
+                    </div>
+                    <input
+                      className="input"
+                      type="text"
+                      placeholder="1234567890-abc...apps.googleusercontent.com"
+                      value={settings.googleClientId || ''}
+                      onChange={e => save('googleClientId', e.target.value)}
+                      style={{ fontSize: 12, fontFamily: 'monospace' }}
+                    />
+                  </div>
+
+                  {settings.googleClientId && (
+                    <div style={{ fontSize: 12, color: 'var(--text2)', padding: '10px 14px', background: 'var(--bg3)', borderRadius: 8, lineHeight: 1.7 }}>
+                      Client ID saved. Open the <strong style={{ color: 'var(--text3)' }}>JARVIS tab</strong> — you'll see a ☁️ button in the header. Tap it to sign in with Google and start saving conversations automatically.
+                    </div>
+                  )}
                 </div>
               </div>
             )}

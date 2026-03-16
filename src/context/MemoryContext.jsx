@@ -1,14 +1,31 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState } from 'react'
 
 const MemoryContext = createContext()
 
 const DEFAULT_MEMORY = {
-  facts: [],          // things JARVIS has learned about you
-  routines: [],       // your typical routines
-  preferences: {},    // inferred preferences
-  recentTopics: [],   // recent conversation topics
-  mood: null,         // detected current mood
+  facts: [],
+  routines: [],
+  preferences: {},
+  recentTopics: [],
+  mood: null,
   lastSeen: null,
+}
+
+export function mergeMemories(local, remote) {
+  const factMap = new Map()
+  ;[...local.facts, ...remote.facts].forEach(f => factMap.set(f.id, f))
+  const facts = [...factMap.values()].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+
+  const routineMap = new Map()
+  ;[...local.routines, ...remote.routines].forEach(r => routineMap.set(r.id, r))
+  const routines = [...routineMap.values()].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+
+  const preferences = { ...local.preferences, ...remote.preferences }
+  const recentTopics = [...new Set([...local.recentTopics, ...remote.recentTopics])].slice(0, 100)
+  const lastSeen = (!local.lastSeen || (remote.lastSeen && remote.lastSeen > local.lastSeen))
+    ? remote.lastSeen : local.lastSeen
+
+  return { ...local, facts, routines, preferences, recentTopics, lastSeen }
 }
 
 export function MemoryProvider({ children }) {
@@ -28,34 +45,49 @@ export function MemoryProvider({ children }) {
 
   const addFact = (fact, category = 'general') => {
     const entry = { id: Date.now(), text: fact, category, timestamp: new Date().toISOString() }
-    const updated = { ...memory, facts: [entry, ...memory.facts.slice(0, 49)] }
-    saveMemory(updated)
+    saveMemory({ ...memory, facts: [entry, ...memory.facts] })
+  }
+
+  const editFact = (id, newText) => {
+    saveMemory({ ...memory, facts: memory.facts.map(f => f.id === id ? { ...f, text: newText } : f) })
+  }
+
+  const removeFact = (id) => {
+    saveMemory({ ...memory, facts: memory.facts.filter(f => f.id !== id) })
   }
 
   const addRoutine = (routine) => {
     const entry = { id: Date.now(), ...routine, timestamp: new Date().toISOString() }
-    const updated = { ...memory, routines: [entry, ...memory.routines.slice(0, 19)] }
-    saveMemory(updated)
+    saveMemory({ ...memory, routines: [entry, ...memory.routines] })
+  }
+
+  const removeRoutine = (id) => {
+    saveMemory({ ...memory, routines: memory.routines.filter(r => r.id !== id) })
   }
 
   const setPreference = (key, value) => {
-    const updated = { ...memory, preferences: { ...memory.preferences, [key]: value } }
-    saveMemory(updated)
+    saveMemory({ ...memory, preferences: { ...memory.preferences, [key]: value } })
   }
 
   const addTopic = (topic) => {
-    const updated = {
+    saveMemory({
       ...memory,
-      recentTopics: [topic, ...memory.recentTopics.filter(t => t !== topic).slice(0, 9)],
+      recentTopics: [topic, ...memory.recentTopics.filter(t => t !== topic)],
       lastSeen: new Date().toISOString(),
-    }
-    saveMemory(updated)
+    })
+  }
+
+  const removeTopic = (topic) => {
+    saveMemory({ ...memory, recentTopics: memory.recentTopics.filter(t => t !== topic) })
+  }
+
+  const mergeRemoteMemory = (remote) => {
+    saveMemory(mergeMemories(memory, { ...DEFAULT_MEMORY, ...remote }))
   }
 
   const clearMemory = () => saveMemory(DEFAULT_MEMORY)
 
-  // Parse AI response for memory cues
-  const extractMemory = (userMsg, aiResponse) => {
+  const extractMemory = (userMsg) => {
     const lower = userMsg.toLowerCase()
     if (lower.includes('i usually') || lower.includes('i always') || lower.includes('i like')) {
       addFact(userMsg, 'preference')
@@ -66,7 +98,14 @@ export function MemoryProvider({ children }) {
   }
 
   return (
-    <MemoryContext.Provider value={{ memory, addFact, addRoutine, setPreference, addTopic, clearMemory, extractMemory }}>
+    <MemoryContext.Provider value={{
+      memory,
+      addFact, editFact, removeFact,
+      addRoutine, removeRoutine,
+      setPreference,
+      addTopic, removeTopic,
+      clearMemory, extractMemory, mergeRemoteMemory,
+    }}>
       {children}
     </MemoryContext.Provider>
   )

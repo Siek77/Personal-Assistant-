@@ -34,6 +34,8 @@ body {
   color: var(--text);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  /* iOS safe area support */
+  padding-top: env(safe-area-inset-top);
 }
 
 /* Scrollbar */
