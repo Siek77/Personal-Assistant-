@@ -30,13 +30,13 @@ export default async function handler(req, res) {
     })
 
     const contentType = upstream.headers.get('content-type') || ''
-    if (contentType.includes('application/json')) {
-      const data = await upstream.json()
-      return res.status(upstream.status).json(data)
-    } else {
-      const text = await upstream.text()
-      return res.status(upstream.status).send(text)
+    if (!contentType.includes('application/json')) {
+      return res.status(502).json({
+        error: `Home Assistant returned a non-JSON response (HTTP ${upstream.status}). Check your HA URL, token, and Cloudflare Access credentials.`,
+      })
     }
+    const data = await upstream.json()
+    return res.status(upstream.status).json(data)
   } catch (err) {
     return res.status(502).json({ error: 'Upstream request failed', detail: err.message })
   }

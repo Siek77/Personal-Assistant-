@@ -252,8 +252,9 @@ export default function HomeTab() {
         headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json', ...cfHeaders },
         signal: AbortSignal.timeout(10000),
       })
-      if (!r.ok) throw new Error(`HA returned ${r.status} — check URL and token`)
-      const data = await r.json()
+      const json = await r.json()
+      if (!r.ok) throw new Error(json.error || `HA returned ${r.status} — check URL and token`)
+      const data = json
       setEntities(data.filter(e => SHOWN_DOMAINS.includes(domain(e.entity_id))))
       setLastUpdated(new Date())
       // Cache snapshot for Proactive widget + JARVIS context
