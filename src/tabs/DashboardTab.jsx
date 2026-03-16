@@ -745,21 +745,32 @@ function CustomWidget({ config }) {
 }
 
 // ── StocksWidget ───────────────────────────────────────────────────────────────
-// Fetch a single ticker directly from Yahoo Finance v8/chart (browser-side, CORS allowed).
+// Direct browser fetch via Stooq (no CORS issues, no auth).
+function toStooqSym(sym) {
+  const s = sym.toUpperCase()
+  if (s.startsWith('^')) return sym.toLowerCase()
+  const bases = ['BTC','ETH','LTC','XRP','ADA','SOL','DOGE','AVAX','DOT','LINK','MATIC','BNB']
+  const base = s.split(/[-/]/)[0]
+  if (bases.includes(base)) return base.toLowerCase() + '.v'
+  return sym.toLowerCase() + '.us'
+}
 async function fetchTickerDirect(sym) {
+  const stooq = toStooqSym(sym)
   const r = await fetch(
-    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`,
-    { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) }
+    `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooq)}&i=d`,
+    { signal: AbortSignal.timeout(8000) }
   )
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  const json = await r.json()
-  const meta = json.chart?.result?.[0]?.meta
-  if (!meta?.regularMarketPrice) throw new Error('no data')
-  const price = meta.regularMarketPrice
-  const prev  = meta.chartPreviousClose ?? meta.previousClose ?? price
+  const text  = (await r.text()).trim()
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'No data')
+  if (lines.length < 3) throw new Error(`${sym}: no data`)
+  const parse = row => { const c = row.trim().split(','); return parseFloat(c[4]) }
+  const price   = parse(lines[lines.length - 1])
+  const prev    = parse(lines[lines.length - 2])
+  if (isNaN(price)) throw new Error(`${sym}: N/D`)
   const change        = price - prev
   const changePercent = prev ? (change / prev) * 100 : 0
-  return { symbol: meta.symbol, name: meta.shortName || meta.longName || sym, price, change, changePercent }
+  return { symbol: sym, name: sym, price, change, changePercent }
 }
 
 function StocksWidget({ watchedStocks }) {

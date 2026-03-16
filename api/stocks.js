@@ -1,76 +1,47 @@
-const UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+const UA = 'Mozilla/5.0 (compatible; StocksBot/1.0)'
 
-// Module-level cache so warm Vercel instances reuse the same crumb.
-let _crumb  = null
-let _cookie = null
-let _expiry = 0
-
-async function getYahooCrumb() {
-  if (_crumb && Date.now() < _expiry) return { crumb: _crumb, cookie: _cookie }
-
-  // 1. Hit Yahoo Finance homepage to receive session cookies.
-  const pageRes = await fetch('https://finance.yahoo.com/', {
-    headers: { 'User-Agent': UA, Accept: 'text/html' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(10_000),
-  })
-
-  // Collect all Set-Cookie values (Node 18+ native fetch).
-  const setCookies =
-    typeof pageRes.headers.getSetCookie === 'function'
-      ? pageRes.headers.getSetCookie()
-      : (pageRes.headers.get('set-cookie') || '').split(/,(?=[^ ])/)
-
-  const cookieStr = setCookies.map(c => c.split(';')[0]).join('; ')
-
-  // 2. Exchange cookies for a crumb.
-  const crumbRes = await fetch(
-    'https://query2.finance.yahoo.com/v1/test/getcrumb',
-    {
-      headers: { 'User-Agent': UA, Accept: 'text/plain', Cookie: cookieStr },
-      signal: AbortSignal.timeout(8_000),
-    }
-  )
-  if (!crumbRes.ok) throw new Error(`crumb HTTP ${crumbRes.status}`)
-
-  const crumb = (await crumbRes.text()).trim()
-  if (!crumb || crumb.startsWith('<')) throw new Error('no crumb received')
-
-  _crumb  = crumb
-  _cookie = cookieStr
-  _expiry = Date.now() + 25 * 60 * 1000   // reuse for 25 min
-  return { crumb, cookie: cookieStr }
+// Map user-supplied symbols to Stooq format.
+// US stocks → aapl.us  |  major crypto → btc.v  |  indices (^GSPC) → keep as-is lowercased
+function toStooqSym(sym) {
+  const s = sym.toUpperCase()
+  if (s.startsWith('^')) return sym.toLowerCase()
+  const cryptoBase = ['BTC','ETH','LTC','XRP','ADA','SOL','DOGE','AVAX','DOT','LINK','MATIC','BNB']
+  const base = s.split(/[-/]/)[0]
+  if (cryptoBase.includes(base)) return base.toLowerCase() + '.v'
+  return sym.toLowerCase() + '.us'
 }
 
-async function fetchQuote(symbol, crumb, cookie) {
-  const url =
-    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
-    `?interval=1d&range=5d&crumb=${encodeURIComponent(crumb)}`
+// Stooq returns daily CSV:  Date,Open,High,Low,Close,Volume
+async function fetchQuote(symbol) {
+  const stooq = toStooqSym(symbol)
+  const url   = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooq)}&i=d`
 
   const r = await fetch(url, {
-    headers: { 'User-Agent': UA, Accept: 'application/json', Cookie: cookie },
+    headers: { 'User-Agent': UA, Accept: 'text/csv,text/plain' },
     signal: AbortSignal.timeout(8_000),
   })
   if (!r.ok) throw new Error(`${symbol}: HTTP ${r.status}`)
 
-  const data = await r.json()
-  const meta = data.chart?.result?.[0]?.meta
-  if (!meta?.regularMarketPrice) throw new Error(`${symbol}: no data`)
+  const text  = (await r.text()).trim()
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'No data')
+  // lines[0] = header row
+  if (lines.length < 3) throw new Error(`${symbol}: no data`)
 
-  const price = meta.regularMarketPrice
-  const prev  = meta.chartPreviousClose ?? meta.previousClose ?? price
-  const change        = price - prev
-  const changePercent = prev ? (change / prev) * 100 : 0
-
-  return {
-    symbol:        meta.symbol,
-    name:          meta.shortName || meta.longName || meta.symbol,
-    price,
-    change,
-    changePercent,
+  const parse = row => {
+    const cols = row.trim().split(',')
+    return { date: cols[0], open: parseFloat(cols[1]), close: parseFloat(cols[4]) }
   }
+
+  const latest = parse(lines[lines.length - 1])
+  const prev   = parse(lines[lines.length - 2])
+
+  if (isNaN(latest.close)) throw new Error(`${symbol}: invalid data (N/D)`)
+
+  const price         = latest.close
+  const change        = price - prev.close
+  const changePercent = prev.close ? (change / prev.close) * 100 : 0
+
+  return { symbol, name: symbol, price, change, changePercent }
 }
 
 export default async function handler(req, res) {
@@ -82,21 +53,15 @@ export default async function handler(req, res) {
 
   const list = symbols.split(',').map(s => s.trim()).filter(Boolean)
 
-  try {
-    const { crumb, cookie } = await getYahooCrumb()
+  const results = await Promise.allSettled(list.map(fetchQuote))
 
-    const results = await Promise.allSettled(list.map(sym => fetchQuote(sym, crumb, cookie)))
-
-    const quotes = []
-    const errors = []
-    for (const r of results) {
-      if (r.status === 'fulfilled') quotes.push(r.value)
-      else errors.push(r.reason?.message || 'unknown error')
-    }
-
-    res.json({ quotes, ...(errors.length ? { errors } : {}) })
-  } catch (e) {
-    // Crumb fetch failed — surface error so client knows what went wrong.
-    res.status(502).json({ error: e.message })
+  const quotes = []
+  const errors = []
+  for (const r of results) {
+    if (r.status === 'fulfilled') quotes.push(r.value)
+    else errors.push(r.reason?.message || 'unknown error')
   }
+
+  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
+  res.json({ quotes, ...(errors.length ? { errors } : {}) })
 }
