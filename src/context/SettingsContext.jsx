@@ -41,6 +41,8 @@ const DEFAULTS = {
   uptimeUrls: '[]',
   // TTS
   ttsEnabled: false,
+  // Stocks — comma-separated tickers, e.g. "AAPL,MSFT,TSLA"
+  watchedStocks: 'AAPL,MSFT,TSLA',
 }
 
 // Convert #rrggbb to "r,g,b"

@@ -1,6 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSettings } from '../context/SettingsContext'
 
+// ── Color helpers ─────────────────────────────────────────────────────────────
+function rgbToHex([r, g, b]) {
+  return '#' + [r, g, b].map(n => Math.round(n).toString(16).padStart(2, '0')).join('')
+}
+function hexToRgbArr(hex) {
+  const n = parseInt(hex.replace('#', ''), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+function isColorCapable(entity) {
+  const modes = entity.attributes?.supported_color_modes || []
+  return modes.some(m => ['rgb', 'hs', 'xy', 'rgbw', 'rgbww'].includes(m))
+}
+
 // ── Domain helpers ────────────────────────────────────────────────────────────
 
 const DOMAIN_META = {
@@ -35,6 +48,9 @@ function EntityCard({ entity, onToggle, onTrigger, pending }) {
   const name = friendlyName(entity)
   const on = isOn(entity)
   const toggleable = isToggleable(entity)
+  const colorable = d === 'light' && on && isColorCapable(entity)
+  const [localColor, setLocalColor] = useState(null)
+  const colorTimerRef = useRef(null)
 
   // Climate display
   const isClimate = d === 'climate'
@@ -138,6 +154,28 @@ function EntityCard({ entity, onToggle, onTrigger, pending }) {
           onMouseUp={e => onToggle(entity, { brightness: Number(e.target.value) })}
         />
       )}
+      {/* Color picker for color-capable lights */}
+      {colorable && (() => {
+        const rgb = entity.attributes?.rgb_color
+        const hex = localColor || (rgb ? rgbToHex(rgb) : '#fbbf24')
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <div style={{ width: 14, height: 14, borderRadius: 3, background: hex, border: '1px solid rgba(255,255,255,0.2)', flexShrink: 0 }} />
+            <input
+              type="color" value={hex}
+              onChange={e => {
+                const v = e.target.value
+                setLocalColor(v)
+                clearTimeout(colorTimerRef.current)
+                colorTimerRef.current = setTimeout(() => onToggle(entity, { rgb_color: hexToRgbArr(v) }), 500)
+              }}
+              style={{ flex: 1, height: 20, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'none' }}
+              title="Pick color"
+            />
+            <span style={{ fontSize: 10, color: 'var(--text2)', flexShrink: 0 }}>Color</span>
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -206,6 +244,16 @@ export default function HomeTab() {
       const data = await r.json()
       setEntities(data.filter(e => SHOWN_DOMAINS.includes(domain(e.entity_id))))
       setLastUpdated(new Date())
+      // Cache snapshot for Proactive widget + JARVIS context
+      try {
+        const lightsOn = data.filter(e => e.entity_id.startsWith('light.') && e.state === 'on').length
+        const thermo = data.find(e => e.entity_id.startsWith('climate.'))
+        localStorage.setItem('jarvis_ha_snapshot', JSON.stringify({
+          lightsOn,
+          temperature: thermo?.attributes?.current_temperature ?? null,
+          lastUpdated: new Date().toISOString(),
+        }))
+      } catch {}
     } catch (e) {
       setError(e.message)
     } finally {

@@ -120,6 +120,36 @@ function buildSystemPrompt(settings, memory) {
     } catch { return '' }
   })()
 
+  const weatherContext = (() => {
+    try {
+      const w = JSON.parse(localStorage.getItem('jarvis_weather_cache') || 'null')
+      if (!w) return ''
+      const age = (Date.now() - new Date(w.cachedAt).getTime()) / 60000
+      if (age > 120) return '' // stale after 2 hours
+      return `Current weather: ${w.temp}°F, ${w.desc}.${w.rainChance > 30 ? ` Rain chance today: ${w.rainChance}%.` : ' No significant rain expected.'}`
+    } catch { return '' }
+  })()
+
+  const haContext = (() => {
+    try {
+      const ha = JSON.parse(localStorage.getItem('jarvis_ha_snapshot') || 'null')
+      if (!ha) return ''
+      const age = (Date.now() - new Date(ha.lastUpdated).getTime()) / 60000
+      if (age > 30) return ''
+      const parts = [`${ha.lightsOn} light${ha.lightsOn !== 1 ? 's' : ''} on`]
+      if (ha.temperature != null) parts.push(`thermostat at ${ha.temperature}°`)
+      return `Smart home: ${parts.join(', ')}.`
+    } catch { return '' }
+  })()
+
+  const stocksContext = (() => {
+    try {
+      const stocks = JSON.parse(localStorage.getItem('jarvis_stocks_cache') || '[]')
+      if (!stocks.length) return ''
+      return `Portfolio today: ${stocks.map(s => `${s.symbol} ${(s.changePercent || 0) >= 0 ? '+' : ''}${s.changePercent?.toFixed(1)}%`).join(', ')}.`
+    } catch { return '' }
+  })()
+
   return `You are JARVIS, a highly intelligent personalized AI assistant — like Tony Stark's JARVIS. You are helpful, witty, precise, and proactive. Address the user as "${name}". Today is ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.
 
 What you know about ${name}:
@@ -131,6 +161,9 @@ ${routines}
 Recent interests: ${topics}
 ${calEvents ? `\nUpcoming calendar events:\n${calEvents}` : ''}
 ${emailSummary ? `\nRecent emails:\n${emailSummary}` : ''}
+${weatherContext ? `\nLive context:\n- ${weatherContext}` : ''}
+${haContext ? `- ${haContext}` : ''}
+${stocksContext ? `- ${stocksContext}` : ''}
 
 Guidelines:
 - Be concise but thorough. Match the user's energy.
@@ -249,6 +282,8 @@ export default function JarvisTab() {
   const [emailsExpanded, setEmailsExpanded] = useState(false)
   const [emailLoading, setEmailLoading] = useState(false)
   const [ttsEnabled, setTtsEnabled] = useState(settings.ttsEnabled || false)
+  const [listening, setListening] = useState(false)
+  const recognitionRef = useRef(null)
   const messagesEnd = useRef(null)
   const saveTimerRef = useRef(null)
 
@@ -375,6 +410,31 @@ export default function JarvisTab() {
     setTtsEnabled(next)
     updateSetting('ttsEnabled', next)
     if (!next) stopSpeaking()
+  }
+
+  // ── Voice Input ──
+  const toggleVoice = () => {
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+      return
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { setError('Voice input is not supported in this browser. Try Chrome or Edge.'); return }
+    const rec = new SR()
+    rec.continuous = false
+    rec.interimResults = false
+    rec.lang = 'en-US'
+    rec.onresult = (e) => {
+      const transcript = e.results[0][0].transcript
+      setInput(prev => prev + (prev.trim() ? ' ' : '') + transcript)
+      setListening(false)
+    }
+    rec.onerror = () => setListening(false)
+    rec.onend   = () => setListening(false)
+    recognitionRef.current = rec
+    rec.start()
+    setListening(true)
   }
 
   // ── Daily Brief ──
@@ -629,6 +689,14 @@ export default function JarvisTab() {
             onKeyDown={handleKey}
             rows={1}
           />
+          <button
+            className="btn btn-ghost"
+            onClick={toggleVoice}
+            title={listening ? 'Listening… click to stop' : 'Voice input'}
+            style={{ minWidth: 48, height: 48, fontSize: 20, color: listening ? 'var(--red)' : 'var(--text2)', transition: 'color 0.2s', animation: listening ? 'pulse 1s infinite' : 'none' }}
+          >
+            {listening ? '🔴' : '🎙️'}
+          </button>
           <button
             className="btn btn-primary"
             onClick={sendMessage}

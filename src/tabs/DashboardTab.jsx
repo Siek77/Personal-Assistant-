@@ -100,17 +100,32 @@ const AVATAR_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#
 const avatarColor = name => AVATAR_COLORS[(name?.charCodeAt(0) ?? 0) % AVATAR_COLORS.length]
 const nameInitials = name => (name || '?').split(' ').map(n => n[0] || '').join('').toUpperCase().slice(0, 2) || '?'
 
+// ── Color helpers ──────────────────────────────────────────────────────────────
+function rgbToHex([r, g, b]) {
+  return '#' + [r, g, b].map(n => Math.round(n).toString(16).padStart(2, '0')).join('')
+}
+function hexToRgbArr(hex) {
+  const n = parseInt(hex.replace('#', ''), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
 // ── Widget catalog ─────────────────────────────────────────────────────────────
 const WIDGET_CATALOG = {
-  clock:        { label: 'Clock',          icon: '🕐' },
-  system:       { label: 'System Stats',   icon: '💻' },
-  memory:       { label: 'JARVIS Memory',  icon: '🧠' },
-  weather:      { label: 'Weather',        icon: '🌤️' },
-  quickactions: { label: 'Quick Actions',  icon: '⚡' },
-  esp32:        { label: 'ESP32 Sensors',  icon: '📡' },
-  uptime:       { label: 'Uptime Monitor', icon: '🟢' },
-  notion:       { label: 'Notion',         icon: '📝' },
-  news:         { label: 'Headlines',      icon: '📰' },
+  clock:        { label: 'Clock',              icon: '🕐' },
+  system:       { label: 'System Stats',       icon: '💻' },
+  memory:       { label: 'JARVIS Memory',      icon: '🧠' },
+  weather:      { label: 'Weather',            icon: '🌤️' },
+  quickactions: { label: 'Quick Actions',      icon: '⚡' },
+  esp32:        { label: 'ESP32 Sensors',      icon: '📡' },
+  uptime:       { label: 'Uptime Monitor',     icon: '🟢' },
+  notion:       { label: 'Notion',             icon: '📝' },
+  news:         { label: 'Headlines',          icon: '📰' },
+  stocks:       { label: 'Stocks',             icon: '📈' },
+  habits:       { label: 'Habit Tracker',      icon: '✅' },
+  dailybrief:   { label: 'Daily Brief',        icon: '☀️' },
+  proactive:    { label: 'Proactive Insights', icon: '🧩' },
+  pomodoro:     { label: 'Pomodoro Timer',     icon: '🍅' },
+  colorlights:  { label: 'Color Lights',       icon: '🎨' },
 }
 
 // Generate default layout positions based on available canvas width
@@ -157,6 +172,17 @@ function WeatherWidget() {
       const data = await res.json()
       setWeather(data.current)
       setForecastData(data)
+      // Cache for Daily Brief, Proactive widget, and JARVIS context
+      try {
+        const rainChance = data.daily?.precipitation_probability_max?.[0] || 0
+        localStorage.setItem('jarvis_weather_cache', JSON.stringify({
+          temp: Math.round(data.current.temperature_2m),
+          desc: wmoDesc(data.current.weather_code),
+          icon: wmoIcon(data.current.weather_code),
+          rainChance,
+          cachedAt: new Date().toISOString(),
+        }))
+      } catch {}
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
@@ -718,6 +744,536 @@ function CustomWidget({ config }) {
   )
 }
 
+// ── StocksWidget ───────────────────────────────────────────────────────────────
+function StocksWidget({ watchedStocks }) {
+  const [quotes, setQuotes] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [lastFetched, setLastFetched] = useState(null)
+
+  const symbols = (watchedStocks || '').trim().replace(/\s+/g, '')
+
+  const fetchQuotes = async () => {
+    if (!symbols) return
+    setLoading(true); setError(null)
+    try {
+      const r = await fetch(`/api/stocks?symbols=${encodeURIComponent(symbols)}`)
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || 'Failed')
+      setQuotes(data.quotes || [])
+      setLastFetched(new Date())
+      // Cache for Daily Brief + JARVIS context
+      try { localStorage.setItem('jarvis_stocks_cache', JSON.stringify(data.quotes || [])) } catch {}
+    } catch (e) { setError(e.message) } finally { setLoading(false) }
+  }
+
+  useEffect(() => { fetchQuotes() }, [symbols])
+
+  if (!symbols) return (
+    <div className="widget">
+      <div className="widget-header"><span>📈</span> Stocks</div>
+      <div style={{ fontSize: 12, color: 'var(--text2)' }}>Add tickers in <strong>Settings → Stocks</strong> to track your portfolio.</div>
+    </div>
+  )
+
+  return (
+    <div className="widget">
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>📈</span> Stocks</div>
+        <button className="btn btn-ghost btn-sm" onClick={fetchQuotes}>{loading ? '...' : '⟳'}</button>
+      </div>
+      {error && <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 8 }}>⚠️ {error}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {quotes.map(q => {
+          const up = (q.changePercent || 0) >= 0
+          const color = up ? 'var(--green)' : 'var(--red)'
+          return (
+            <div key={q.symbol} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{q.symbol}</div>
+                <div style={{ fontSize: 10, color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.name}</div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, fontFamily: 'Orbitron, monospace', color: 'var(--text)' }}>
+                  ${q.price?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div style={{ fontSize: 11, color, fontWeight: 600 }}>
+                  {up ? '+' : ''}{q.change?.toFixed(2)} ({up ? '+' : ''}{q.changePercent?.toFixed(2)}%)
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {lastFetched && !loading && (
+        <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 6 }}>
+          Updated {lastFetched.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · Powered by Yahoo Finance
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── HabitWidget ────────────────────────────────────────────────────────────────
+function HabitWidget() {
+  const todayStr = new Date().toISOString().slice(0, 10)
+
+  const [habits, setHabits] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('jarvis_habits') || '[]') } catch { return [] }
+  })
+  const [doneSet, setDoneSet] = useState(() => {
+    try {
+      const all = JSON.parse(localStorage.getItem('jarvis_habits_done') || '{}')
+      return new Set(all[todayStr] || [])
+    } catch { return new Set() }
+  })
+  const [newHabit, setNewHabit] = useState('')
+
+  const saveHabits = (h) => { setHabits(h); localStorage.setItem('jarvis_habits', JSON.stringify(h)) }
+
+  const toggleDone = (id) => {
+    const next = new Set(doneSet)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setDoneSet(next)
+    const all = (() => { try { return JSON.parse(localStorage.getItem('jarvis_habits_done') || '{}') } catch { return {} } })()
+    all[todayStr] = [...next]
+    localStorage.setItem('jarvis_habits_done', JSON.stringify(all))
+  }
+
+  const getStreak = (habitId) => {
+    const all = (() => { try { return JSON.parse(localStorage.getItem('jarvis_habits_done') || '{}') } catch { return {} } })()
+    let streak = 0
+    const d = new Date()
+    for (let i = 0; i < 365; i++) {
+      const ds = new Date(d.getTime() - i * 86400000).toISOString().slice(0, 10)
+      if (!(all[ds] || []).includes(habitId)) break
+      streak++
+    }
+    return streak
+  }
+
+  const addHabit = () => {
+    if (!newHabit.trim()) return
+    saveHabits([...habits, { id: String(Date.now()), name: newHabit.trim() }])
+    setNewHabit('')
+  }
+
+  const removeHabit = (id) => saveHabits(habits.filter(h => h.id !== id))
+
+  const doneCount = habits.filter(h => doneSet.has(h.id)).length
+
+  return (
+    <div className="widget">
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>✅</span> Habits</div>
+        {habits.length > 0 && (
+          <span style={{ fontSize: 11, color: 'var(--text2)' }}>{doneCount}/{habits.length} today</span>
+        )}
+      </div>
+      {habits.length === 0 && (
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>Add habits to track daily progress.</div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {habits.map(h => {
+          const done = doneSet.has(h.id)
+          const streak = getStreak(h.id)
+          return (
+            <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+              <button
+                onClick={() => toggleDone(h.id)}
+                style={{
+                  width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                  border: `2px solid ${done ? 'var(--green)' : 'var(--border)'}`,
+                  background: done ? 'var(--green)' : 'transparent',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, color: '#fff', transition: 'all 0.15s',
+                }}
+              >{done ? '✓' : ''}</button>
+              <span style={{ flex: 1, fontSize: 13, color: done ? 'var(--text2)' : 'var(--text)', textDecoration: done ? 'line-through' : 'none', transition: 'all 0.15s' }}>
+                {h.name}
+              </span>
+              {streak > 1 && <span style={{ fontSize: 11, color: '#f97316', fontWeight: 600, flexShrink: 0 }}>🔥{streak}</span>}
+              <button onClick={() => removeHabit(h.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', fontSize: 13, opacity: 0.4, padding: '0 2px', flexShrink: 0 }}>✕</button>
+            </div>
+          )
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <input
+          className="input" style={{ fontSize: 12, flex: 1 }}
+          placeholder="Add habit… (Enter)"
+          value={newHabit} onChange={e => setNewHabit(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && addHabit()}
+        />
+        <button className="btn btn-primary btn-sm" onClick={addHabit}>+</button>
+      </div>
+    </div>
+  )
+}
+
+// ── DailyBriefWidget ───────────────────────────────────────────────────────────
+function DailyBriefWidget() {
+  const { settings } = useSettings()
+  const [, forceRefresh] = useState(0)
+  const now = new Date()
+  const todayStr = now.toISOString().slice(0, 10)
+
+  const weather = (() => { try { return JSON.parse(localStorage.getItem('jarvis_weather_cache') || 'null') } catch { return null } })()
+  const stocks  = (() => { try { return JSON.parse(localStorage.getItem('jarvis_stocks_cache') || '[]') } catch { return [] } })()
+  const todayEvents = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]')
+        .filter(e => e.start && new Date(e.start).toDateString() === now.toDateString())
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+    } catch { return [] }
+  })()
+  const habitsSummary = (() => {
+    try {
+      const h = JSON.parse(localStorage.getItem('jarvis_habits') || '[]')
+      const done = new Set(JSON.parse(localStorage.getItem('jarvis_habits_done') || '{}')?.[todayStr] || [])
+      return { total: h.length, done: h.filter(x => done.has(x.id)).length }
+    } catch { return null }
+  })()
+  const unreadEmails = (() => {
+    try { return JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]').filter(e => e.unread).length } catch { return 0 }
+  })()
+
+  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
+
+  return (
+    <div className="widget">
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>☀️</span> Daily Brief</div>
+        <button className="btn btn-ghost btn-sm" onClick={() => forceRefresh(n => n + 1)} style={{ fontSize: 11 }}>⟳</button>
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 12 }}>
+        {greeting}{settings.userName ? `, ${settings.userName}` : ''}. {now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.
+      </div>
+
+      {/* Weather */}
+      {weather && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 24 }}>{weather.icon}</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{weather.temp}°F — {weather.desc}</div>
+            {weather.rainChance > 30 && <div style={{ fontSize: 11, color: '#60a5fa' }}>💧 {weather.rainChance}% chance of rain</div>}
+          </div>
+        </div>
+      )}
+
+      {/* Calendar */}
+      {todayEvents.length > 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Today</div>
+          {todayEvents.slice(0, 5).map((e, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, padding: '3px 0' }}>
+              <span style={{ fontSize: 11, color: 'var(--blue)', fontFamily: 'monospace', flexShrink: 0, minWidth: 52 }}>
+                {e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.title}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>No events today — clear schedule.</div>
+      )}
+
+      {/* Stocks summary */}
+      {stocks.length > 0 && (
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
+          {stocks.map(s => (
+            <span key={s.symbol} style={{ padding: '3px 7px', background: 'var(--bg3)', borderRadius: 6, fontSize: 11, border: '1px solid var(--border)' }}>
+              <span style={{ fontWeight: 700 }}>{s.symbol}</span>
+              <span style={{ color: (s.changePercent || 0) >= 0 ? 'var(--green)' : 'var(--red)', marginLeft: 4 }}>
+                {(s.changePercent || 0) >= 0 ? '+' : ''}{s.changePercent?.toFixed(1)}%
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Footer stats */}
+      <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text2)', flexWrap: 'wrap', marginTop: 4 }}>
+        {habitsSummary?.total > 0 && (
+          <span>✅ {habitsSummary.done}/{habitsSummary.total} habits</span>
+        )}
+        {unreadEmails > 0 && (
+          <span>✉️ {unreadEmails} unread</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── ProactiveWidget ────────────────────────────────────────────────────────────
+function ProactiveWidget() {
+  const [cards, setCards] = useState([])
+
+  const buildCards = () => {
+    const now = new Date()
+    const todayStr = now.toISOString().slice(0, 10)
+    const next = []
+
+    // Weather: rain alert
+    try {
+      const w = JSON.parse(localStorage.getItem('jarvis_weather_cache') || 'null')
+      if (w?.rainChance > 50) next.push({ id: 'rain', icon: '🌧️', title: `${w.rainChance}% chance of rain today`, desc: `${w.temp}°F — ${w.desc}`, color: '#60a5fa' })
+    } catch {}
+
+    // Calendar: next event within 24h
+    try {
+      const events = JSON.parse(localStorage.getItem('jarvis_calendar_events') || '[]')
+      const upcoming = events
+        .filter(e => { const s = new Date(e.start); const diff = s - now; return diff > 0 && diff < 86400000 })
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+      if (upcoming.length > 0) {
+        const ev = upcoming[0]
+        const diffMin = Math.round((new Date(ev.start) - now) / 60000)
+        const when = diffMin < 60 ? `in ${diffMin}m` : `at ${new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+        next.push({ id: 'next_event', icon: '📅', title: ev.title, desc: when, color: '#ec4899' })
+      }
+    } catch {}
+
+    // Stocks: big mover (>2%)
+    try {
+      const stocks = JSON.parse(localStorage.getItem('jarvis_stocks_cache') || '[]')
+      const mover = stocks.find(s => Math.abs(s.changePercent || 0) > 2)
+      if (mover) {
+        const up = mover.changePercent > 0
+        next.push({ id: 'stock_' + mover.symbol, icon: up ? '📈' : '📉', title: `${mover.symbol} ${up ? 'up' : 'down'} ${Math.abs(mover.changePercent).toFixed(1)}%`, desc: `$${mover.price?.toFixed(2)}`, color: up ? 'var(--green)' : 'var(--red)' })
+      }
+    } catch {}
+
+    // HA: lights on
+    try {
+      const ha = JSON.parse(localStorage.getItem('jarvis_ha_snapshot') || 'null')
+      if (ha?.lightsOn > 0) next.push({ id: 'lights', icon: '💡', title: `${ha.lightsOn} light${ha.lightsOn > 1 ? 's' : ''} on`, desc: 'Smart home', color: '#f59e0b' })
+    } catch {}
+
+    // Habits: remaining today
+    try {
+      const h = JSON.parse(localStorage.getItem('jarvis_habits') || '[]')
+      const done = new Set(JSON.parse(localStorage.getItem('jarvis_habits_done') || '{}')?.[todayStr] || [])
+      const rem = h.filter(x => !done.has(x.id))
+      if (rem.length > 0) next.push({ id: 'habits', icon: '✅', title: `${rem.length} habit${rem.length > 1 ? 's' : ''} remaining`, desc: rem.map(x => x.name).join(', ').slice(0, 50), color: '#10b981' })
+    } catch {}
+
+    // Unread emails
+    try {
+      const unread = JSON.parse(localStorage.getItem('jarvis_email_summary') || '[]').filter(e => e.unread).length
+      if (unread > 0) next.push({ id: 'emails', icon: '✉️', title: `${unread} unread email${unread > 1 ? 's' : ''}`, desc: 'Open JARVIS to read', color: '#8b5cf6' })
+    } catch {}
+
+    setCards(next)
+  }
+
+  useEffect(() => { buildCards() }, [])
+
+  return (
+    <div className="widget">
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>🧩</span> Proactive Insights</div>
+        <button className="btn btn-ghost btn-sm" onClick={buildCards} style={{ fontSize: 11 }}>⟳</button>
+      </div>
+      {cards.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--text2)' }}>All clear — JARVIS is monitoring your data.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {cards.map(card => (
+            <div key={card.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: card.color + '18', border: `1px solid ${card.color}50`, borderRadius: 8 }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>{card.icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{card.title}</div>
+                {card.desc && <div style={{ fontSize: 11, color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.desc}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── PomodoroWidget ─────────────────────────────────────────────────────────────
+function PomodoroWidget() {
+  const WORK_SECS  = 25 * 60
+  const BREAK_SECS = 5  * 60
+
+  const [phase, setPhase] = useState('idle') // idle | work | break | paused
+  const [secsLeft, setSecsLeft] = useState(WORK_SECS)
+  const [sessions, setSessions] = useState(0)
+  const [pausedPhase, setPausedPhase] = useState('work')
+
+  // Run countdown when active
+  useEffect(() => {
+    if (phase !== 'work' && phase !== 'break') return
+    const id = setInterval(() => setSecsLeft(s => (s > 0 ? s - 1 : 0)), 1000)
+    return () => clearInterval(id)
+  }, [phase])
+
+  // Handle expiry
+  useEffect(() => {
+    if (secsLeft !== 0) return
+    if (phase === 'work') {
+      setSessions(s => s + 1)
+      setPhase('break')
+      setSecsLeft(BREAK_SECS)
+    } else if (phase === 'break') {
+      setPhase('idle')
+      setSecsLeft(WORK_SECS)
+    }
+  }, [secsLeft, phase])
+
+  const startWork = () => { setPhase('work'); setSecsLeft(WORK_SECS) }
+  const pause     = () => { setPausedPhase(phase); setPhase('paused') }
+  const resume    = () => setPhase(pausedPhase)
+  const reset     = () => { setPhase('idle'); setSecsLeft(WORK_SECS) }
+  const skipBreak = () => { setPhase('work'); setSecsLeft(WORK_SECS) }
+
+  const activePhase = phase === 'paused' ? pausedPhase : phase
+  const total = activePhase === 'break' ? BREAK_SECS : WORK_SECS
+  const pct   = phase === 'idle' ? 0 : Math.max(0, ((total - secsLeft) / total) * 100)
+  const mins  = Math.floor(secsLeft / 60)
+  const secs  = secsLeft % 60
+  const R     = 42
+  const circ  = 2 * Math.PI * R
+
+  const phaseColor = phase === 'work' ? '#ef4444' : phase === 'break' ? 'var(--green)' : phase === 'paused' ? '#f97316' : 'var(--blue)'
+
+  return (
+    <div className="widget">
+      <div className="widget-header"><span>🍅</span> Pomodoro</div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '8px 0' }}>
+        {/* Ring */}
+        <div style={{ position: 'relative', width: 108, height: 108 }}>
+          <svg viewBox="0 0 100 100" style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
+            <circle cx="50" cy="50" r={R} fill="none" stroke="var(--border)" strokeWidth="7" />
+            <circle cx="50" cy="50" r={R} fill="none" stroke={phaseColor} strokeWidth="7"
+              strokeDasharray={circ} strokeDashoffset={circ * (1 - pct / 100)}
+              style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.3s' }}
+            />
+          </svg>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Orbitron, monospace', color: phaseColor, lineHeight: 1 }}>
+              {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 3, textTransform: 'uppercase', letterSpacing: 1 }}>
+              {phase === 'idle' ? 'Ready' : phase === 'work' ? 'Focus' : phase === 'break' ? 'Break' : 'Paused'}
+            </div>
+          </div>
+        </div>
+        {/* Controls */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {phase === 'idle'   && <button className="btn btn-primary btn-sm" onClick={startWork}>▶ Start</button>}
+          {phase === 'work'   && <><button className="btn btn-ghost btn-sm" onClick={pause}>⏸ Pause</button><button className="btn btn-ghost btn-sm" onClick={reset} style={{ opacity: 0.5 }}>↺</button></>}
+          {phase === 'break'  && <><button className="btn btn-ghost btn-sm" onClick={pause}>⏸</button><button className="btn btn-primary btn-sm" style={{ fontSize: 11 }} onClick={skipBreak}>Skip Break</button></>}
+          {phase === 'paused' && <><button className="btn btn-primary btn-sm" onClick={resume}>▶ Resume</button><button className="btn btn-ghost btn-sm" onClick={reset} style={{ opacity: 0.5 }}>↺</button></>}
+        </div>
+        {sessions > 0 && <div style={{ fontSize: 11, color: 'var(--text2)' }}>🍅 ×{sessions} session{sessions > 1 ? 's' : ''}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ── ColorLightsWidget ──────────────────────────────────────────────────────────
+function ColorLightsWidget({ haUrl, haToken }) {
+  const [lights, setLights] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [pending, setPending] = useState({})
+  const [localColors, setLocalColors] = useState({})
+  const colorTimers = useRef({})
+
+  const base = (haUrl || '').replace(/\/$/, '')
+
+  const isColorCapable = (e) => {
+    const modes = e.attributes?.supported_color_modes || []
+    return modes.some(m => ['rgb', 'hs', 'xy', 'rgbw', 'rgbww'].includes(m))
+  }
+
+  const fetchLights = async () => {
+    if (!base || !haToken) return
+    setLoading(true)
+    try {
+      const r = await fetch(`${base}/api/states`, { headers: { Authorization: `Bearer ${haToken}` }, signal: AbortSignal.timeout(6000) })
+      if (!r.ok) return
+      const states = await r.json()
+      setLights(states.filter(e => e.entity_id.startsWith('light.') && isColorCapable(e)))
+    } catch {} finally { setLoading(false) }
+  }
+
+  useEffect(() => { fetchLights() }, [base, haToken])
+
+  const callHA = async (entityId, service, body) => {
+    setPending(p => ({ ...p, [entityId]: true }))
+    try {
+      await fetch(`${base}/api/services/light/${service}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity_id: entityId, ...body }),
+        signal: AbortSignal.timeout(5000),
+      })
+      setTimeout(fetchLights, 1200)
+    } catch {} finally { setPending(p => { const n = { ...p }; delete n[entityId]; return n }) }
+  }
+
+  const setColor = (entityId, hex) => callHA(entityId, 'turn_on', { rgb_color: hexToRgbArr(hex) })
+  const toggle   = (light) => callHA(light.entity_id, light.state === 'on' ? 'turn_off' : 'turn_on', {})
+
+  if (!base || !haToken) return (
+    <div className="widget">
+      <div className="widget-header"><span>🎨</span> Color Lights</div>
+      <div style={{ fontSize: 12, color: 'var(--text2)' }}>Connect Home Assistant in Settings → Home to control color lights.</div>
+    </div>
+  )
+
+  return (
+    <div className="widget">
+      <div className="widget-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>🎨</span> Color Lights</div>
+        <button className="btn btn-ghost btn-sm" onClick={fetchLights}>{loading ? '...' : '⟳'}</button>
+      </div>
+      {lights.length === 0 && !loading && (
+        <div style={{ fontSize: 12, color: 'var(--text2)' }}>No color-capable lights found. Ensure HA is connected.</div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8, marginTop: 4 }}>
+        {lights.map(light => {
+          const on  = light.state === 'on'
+          const rgb = light.attributes?.rgb_color
+          const hex = localColors[light.entity_id] || (rgb ? rgbToHex(rgb) : '#fbbf24')
+          const name = light.attributes?.friendly_name || light.entity_id.replace('light.', '').replace(/_/g, ' ')
+          return (
+            <div key={light.entity_id} style={{ padding: '10px 12px', background: on ? hex + '18' : 'var(--bg3)', border: `1px solid ${on ? hex + '55' : 'var(--border)'}`, borderRadius: 10, opacity: pending[light.entity_id] ? 0.6 : 1, transition: 'all 0.2s' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: on ? 8 : 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{name}</span>
+                <button onClick={() => toggle(light)} disabled={pending[light.entity_id]}
+                  style={{ flexShrink: 0, width: 34, height: 18, borderRadius: 9, background: on ? hex : 'var(--border)', border: 'none', cursor: 'pointer', position: 'relative', transition: 'background 0.2s', marginLeft: 8 }}>
+                  <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+                </button>
+              </div>
+              {on && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ width: 16, height: 16, borderRadius: 4, background: hex, border: '1px solid rgba(255,255,255,0.25)', flexShrink: 0 }} />
+                  <input
+                    type="color" value={hex}
+                    onChange={e => {
+                      const v = e.target.value
+                      setLocalColors(prev => ({ ...prev, [light.entity_id]: v }))
+                      clearTimeout(colorTimers.current[light.entity_id])
+                      colorTimers.current[light.entity_id] = setTimeout(() => setColor(light.entity_id, v), 500)
+                    }}
+                    style={{ flex: 1, height: 22, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'none' }}
+                  />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── AddWidgetPanel ─────────────────────────────────────────────────────────────
 function AddWidgetPanel({ layout, customWidgets, onClose, onAdd, onCreate, onDeleteCustom }) {
   const [showForm, setShowForm] = useState(false)
@@ -930,6 +1486,12 @@ export default function DashboardTab() {
       case 'uptime':       return <UptimeWidget uptimeUrlsJson={settings.uptimeUrls} />
       case 'notion':       return <NotionWidget apiKey={settings.notionApiKey} databaseId={settings.notionDatabaseId} w={widgetW} />
       case 'news':         return <NewsWidget apiKey={settings.newsApiKey} />
+      case 'stocks':       return <StocksWidget watchedStocks={settings.watchedStocks} />
+      case 'habits':       return <HabitWidget />
+      case 'dailybrief':   return <DailyBriefWidget />
+      case 'proactive':    return <ProactiveWidget />
+      case 'pomodoro':     return <PomodoroWidget />
+      case 'colorlights':  return <ColorLightsWidget haUrl={settings.haUrl} haToken={settings.haToken} />
       default:             return null
     }
   }

@@ -19,6 +19,7 @@ const SECTIONS = [
   { id: 'notion',     label: '📝 Notion',     icon: '📝' },
   { id: 'uptime',     label: '🟢 Uptime',     icon: '🟢' },
   { id: 'services',   label: '🔌 Services',   icon: '🔌' },
+  { id: 'stocks',     label: '📈 Stocks',     icon: '📈' },
   { id: 'appearance', label: '🎨 Look',       icon: '🎨' },
   { id: 'memory',     label: '🧠 Memory',     icon: '🧠' },
   { id: 'sync',       label: '☁️ Sync',       icon: '☁️' },
@@ -535,6 +536,34 @@ export default function SettingsTab() {
                 />
                 <div style={{ marginTop: 16, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
                   All keys are stored in your browser's localStorage and used only for direct API calls from your device.
+                </div>
+              </div>
+            )}
+
+            {/* Stocks */}
+            {activeSection === 'stocks' && (
+              <div className="settings-section">
+                <h3>Stock Tracker</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Enter the tickers you want to track. These will appear in the Stocks dashboard widget, Daily Brief, and JARVIS context. Data is fetched via Yahoo Finance — no API key required.
+                </p>
+                <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+                  <div className="settings-label">Watched Tickers</div>
+                  <div className="settings-desc">Comma-separated. Use Yahoo Finance symbols — stocks (AAPL), crypto (BTC-USD), ETFs (SPY), indices (^GSPC)</div>
+                  <input
+                    className="input"
+                    value={settings.watchedStocks || ''}
+                    onChange={e => save('watchedStocks', e.target.value)}
+                    placeholder="AAPL,MSFT,TSLA,BTC-USD,SPY"
+                    style={{ fontSize: 13, width: '100%' }}
+                  />
+                </div>
+                <div style={{ marginTop: 16, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                  <strong style={{ color: 'var(--text3)' }}>Examples:</strong><br />
+                  Stocks: <code style={{ fontSize: 11 }}>AAPL, MSFT, TSLA, NVDA, AMZN</code><br />
+                  Crypto: <code style={{ fontSize: 11 }}>BTC-USD, ETH-USD, SOL-USD</code><br />
+                  ETFs: <code style={{ fontSize: 11 }}>SPY, QQQ, VTI</code><br />
+                  Indices: <code style={{ fontSize: 11 }}>^GSPC (S&P 500), ^DJI (Dow), ^IXIC (Nasdaq)</code>
                 </div>
               </div>
             )}
