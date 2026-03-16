@@ -4,6 +4,23 @@
 import { useState, useCallback, useEffect } from 'react'
 import { getOrCreateClientId } from '../utils/persistence'
 
+async function parseApiJson(response) {
+  const text = await response.text()
+  let data = null
+
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    throw new Error(text || `Request failed with ${response.status}`)
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.error || `Request failed with ${response.status}`)
+  }
+
+  return data
+}
+
 export function useConversations() {
   const [storageInfo, setStorageInfo] = useState(null) // { totalBytes, limitBytes }
   const [isAvailable, setIsAvailable] = useState(false)
@@ -25,11 +42,10 @@ export function useConversations() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, messages, savedAt: new Date().toISOString() }),
     })
-    const data = await r.json()
+    const data = await parseApiJson(r)
     if (data.totalBytes !== undefined) {
       setStorageInfo({ totalBytes: data.totalBytes, limitBytes: data.limitBytes })
     }
-    if (!r.ok) throw new Error(data.error || 'Save failed')
     return data
   }, [])
 
@@ -38,7 +54,7 @@ export function useConversations() {
     const key = await getKey()
     if (!key) return []
     const r = await fetch(`/api/conversations?key=${key}`)
-    const data = await r.json()
+    const data = await parseApiJson(r)
     if (data.totalBytes !== undefined) {
       setStorageInfo({ totalBytes: data.totalBytes, limitBytes: data.limitBytes })
     }
@@ -52,7 +68,7 @@ export function useConversations() {
     const results = await Promise.all(
       recent.map(c =>
         fetch(`/api/conversations?key=${encodeURIComponent(getOrCreateClientId())}&id=${encodeURIComponent(c.id)}`)
-          .then(r => r.json())
+          .then(parseApiJson)
           .then(data => data.conversation || null)
           .catch(() => null)
       )
@@ -64,8 +80,7 @@ export function useConversations() {
     const key = await getKey()
     if (!key || !id) return null
     const r = await fetch(`/api/conversations?key=${encodeURIComponent(key)}&id=${encodeURIComponent(id)}`)
-    const data = await r.json()
-    if (!r.ok) throw new Error(data.error || 'Load failed')
+    const data = await parseApiJson(r)
     return data.conversation || null
   }, [])
 
@@ -78,9 +93,10 @@ export function useConversations() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
     })
+    await parseApiJson(r)
     // Refresh storage info after delete
     await listConversations()
-    return r.json()
+    return { ok: true }
   }, [listConversations])
 
   // Refresh storage info without loading content
