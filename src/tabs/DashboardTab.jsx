@@ -839,15 +839,63 @@ function AddWidgetPanel({ layout, customWidgets, onClose, onAdd, onCreate, onDel
 }
 
 // ── CamerasWidget ──────────────────────────────────────────────────────────────
-function CamerasWidget({ haUrl, haToken }) {
-  const [cameras, setCameras]   = useState([])
-  const [snaps, setSnaps]       = useState({})   // entityId -> dataURL
-  const [loading, setLoading]   = useState(false)
-  const [modal, setModal]       = useState(null)  // entityId of expanded camera
-  const [modalSnap, setModalSnap] = useState(null)
-  const liveTimerRef = useRef(null)
+// Loads hls.js once from CDN for HLS stream playback
+let hlsJsLoaded = false
+function loadHlsJs() {
+  if (hlsJsLoaded || window.Hls) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js'
+    s.onload = () => { hlsJsLoaded = true; resolve() }
+    s.onerror = reject
+    document.head.appendChild(s)
+  })
+}
 
-  // Fetch one snapshot via the HA proxy, returns a data URL
+function HlsPlayer({ streamUrl }) {
+  const videoRef = useRef(null)
+
+  useEffect(() => {
+    if (!streamUrl || !videoRef.current) return
+    let hls
+    loadHlsJs().then(() => {
+      const video = videoRef.current
+      if (!video) return
+      if (window.Hls && window.Hls.isSupported()) {
+        hls = new window.Hls({ liveSyncDurationCount: 1, liveMaxLatencyDurationCount: 2 })
+        hls.loadSource(streamUrl)
+        hls.attachMedia(video)
+        hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}))
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari native HLS
+        video.src = streamUrl
+        video.play().catch(() => {})
+      }
+    })
+    return () => { hls?.destroy() }
+  }, [streamUrl])
+
+  return (
+    <video
+      ref={videoRef}
+      style={{ width: '100%', display: 'block', background: '#000', maxHeight: 480 }}
+      controls
+      playsInline
+      muted
+    />
+  )
+}
+
+function CamerasWidget({ haUrl, haToken }) {
+  const [cameras, setCameras]     = useState([])
+  const [snaps, setSnaps]         = useState({})   // entityId -> dataURL (optional, best-effort)
+  const [loading, setLoading]     = useState(false)
+  const [modal, setModal]         = useState(null)  // entityId of open camera
+  const [streamUrl, setStreamUrl] = useState(null)
+  const [streamLoading, setStreamLoading] = useState(false)
+  const [streamErr, setStreamErr] = useState(null)
+
+  // Fetch one snapshot (best-effort — Ring cameras often don't support this)
   const fetchSnap = async (entityId) => {
     try {
       const r = await fetch('/api/ha-camera', {
@@ -861,7 +909,21 @@ function CamerasWidget({ haUrl, haToken }) {
     } catch { return null }
   }
 
-  // Discover camera entities from HA and load first snapshots
+  // Get HLS stream URL from HA via proxy
+  const fetchStreamUrl = async (entityId) => {
+    try {
+      const r = await fetch('/api/ha-camera', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ haUrl, haToken, entityId, action: 'stream' }),
+      })
+      if (!r.ok) return null
+      const { streamUrl } = await r.json()
+      return streamUrl || null
+    } catch { return null }
+  }
+
+  // Discover camera entities from HA
   const discover = async () => {
     if (!haUrl || !haToken) return
     setLoading(true)
@@ -880,31 +942,30 @@ function CamerasWidget({ haUrl, haToken }) {
           state: s.state,
         }))
       setCameras(cams)
-      // Load thumbnails for all cameras
+      // Try snapshots (best-effort — will silently fail for Ring)
       const entries = await Promise.all(cams.map(async c => [c.id, await fetchSnap(c.id)]))
       setSnaps(Object.fromEntries(entries.filter(([, v]) => v)))
     } catch { /* ignore */ } finally { setLoading(false) }
   }
 
-  // Auto-refresh thumbnails every 60 seconds
   useEffect(() => {
     if (!haUrl || !haToken) return
     discover()
-    const t = setInterval(async () => {
-      const entries = await Promise.all(cameras.map(async c => [c.id, await fetchSnap(c.id)]))
-      setSnaps(Object.fromEntries(entries.filter(([, v]) => v)))
-    }, 60000)
-    return () => clearInterval(t)
   }, [haUrl, haToken])
 
-  // Live preview in modal — refresh every 5 seconds
-  useEffect(() => {
-    if (!modal) { clearInterval(liveTimerRef.current); setModalSnap(null); return }
-    const load = async () => { const url = await fetchSnap(modal); if (url) setModalSnap(url) }
-    load()
-    liveTimerRef.current = setInterval(load, 5000)
-    return () => clearInterval(liveTimerRef.current)
-  }, [modal])
+  // Open live modal — fetch HLS stream URL
+  const openModal = async (cam) => {
+    setModal(cam)
+    setStreamUrl(null)
+    setStreamErr(null)
+    setStreamLoading(true)
+    const url = await fetchStreamUrl(cam.id)
+    setStreamLoading(false)
+    if (url) setStreamUrl(url)
+    else setStreamErr('Could not get stream URL from Home Assistant.')
+  }
+
+  const closeModal = () => { setModal(null); setStreamUrl(null); setStreamErr(null) }
 
   if (!haUrl || !haToken) {
     return (
@@ -941,14 +1002,15 @@ function CamerasWidget({ haUrl, haToken }) {
           {cameras.map(cam => (
             <div
               key={cam.id}
-              onClick={() => setModal(cam.id)}
+              onClick={() => openModal(cam)}
               style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg3)', transition: 'border-color 0.15s' }}
               className="cam-thumb"
             >
               {snaps[cam.id]
                 ? <img src={snaps[cam.id]} alt={cam.name} style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }} />
-                : <div style={{ aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, color: 'var(--text2)' }}>
-                    {cam.state === 'unavailable' ? '⚠️' : '📷'}
+                : <div style={{ aspectRatio: '16/9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, color: 'var(--text2)' }}>
+                    <span style={{ fontSize: 22 }}>{cam.state === 'unavailable' ? '⚠️' : '📷'}</span>
+                    <span style={{ fontSize: 9, opacity: 0.6 }}>tap to watch live</span>
                   </div>
               }
               <div style={{ padding: '5px 8px', fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -958,29 +1020,43 @@ function CamerasWidget({ haUrl, haToken }) {
           ))}
         </div>
 
-        <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 8 }}>Thumbnails refresh every 60s · tap to go live</div>
+        <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 8 }}>Tap a camera to start live HLS stream</div>
       </div>
 
       {/* Live modal */}
       {modal && (
         <div
-          onClick={() => setModal(null)}
-          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={closeModal}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
         >
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', maxWidth: 800, width: '100%' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', maxWidth: 860, width: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
               <div>
-                <span style={{ fontWeight: 600 }}>{cameras.find(c => c.id === modal)?.name}</span>
-                <span style={{ fontSize: 11, color: 'var(--green)', marginLeft: 8 }}>● Live · refreshes every 5s</span>
+                <span style={{ fontWeight: 600 }}>{modal.name}</span>
+                <span style={{ fontSize: 11, color: streamUrl ? 'var(--green)' : 'var(--text2)', marginLeft: 8 }}>
+                  {streamUrl ? '● Live HLS' : streamLoading ? '⏳ Connecting…' : ''}
+                </span>
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setModal(null)}>✕</button>
+              <button className="btn btn-ghost btn-sm" onClick={closeModal}>✕</button>
             </div>
-            {modalSnap
-              ? <img src={modalSnap} alt="live" style={{ width: '100%', display: 'block' }} />
-              : <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>⏳</div>
-            }
-            <div style={{ padding: '8px 16px', fontSize: 11, color: 'var(--text2)' }}>
-              {modal} · {new Date().toLocaleTimeString()}
+
+            {streamLoading && (
+              <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--text2)' }}>
+                Starting live stream…
+              </div>
+            )}
+            {streamErr && (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--red)', fontSize: 13 }}>
+                {streamErr}
+                <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 8 }}>
+                  Make sure the <strong>stream</strong> integration is enabled in HA and the Ring camera is online.
+                </div>
+              </div>
+            )}
+            {streamUrl && <HlsPlayer streamUrl={streamUrl} />}
+
+            <div style={{ padding: '8px 16px', fontSize: 10, color: 'var(--text2)' }}>
+              {modal.id}
             </div>
           </div>
         </div>
