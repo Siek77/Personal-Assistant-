@@ -3,14 +3,11 @@ import { createContext, useContext, useState, useEffect } from 'react'
 const SettingsContext = createContext()
 
 const DEFAULTS = {
-  aiProvider: 'gemini',         // 'groq' | 'claude' | 'gemini' | 'openrouter'
+  aiProvider: 'openrouter',     // 'openrouter' (primary) | 'groq' (backup)
+  openrouterApiKey: '',
+  openrouterModel: 'google/gemini-2.5-flash',
   groqApiKey: '',
   groqModel: 'llama-3.3-70b-versatile',
-  claudeApiKey: '',
-  claudeModel: 'claude-sonnet-4-6',
-  geminiApiKey: '',
-  openrouterApiKey: '',
-  openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
   spotifyClientId: '',
   weatherApiKey: '',
   newsApiKey: '',

@@ -251,10 +251,8 @@ export default function SettingsTab() {
                   <div className="settings-label">Active Provider</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, width: '100%' }}>
                     {[
-                      { id: 'groq', name: 'Groq', badge: 'FREE', color: '#10b981', desc: 'Llama 3.3 · Super fast' },
-                      { id: 'gemini', name: 'Gemini', badge: 'FREE', color: '#10b981', desc: 'Google · 1M tokens/day' },
-                      { id: 'openrouter', name: 'OpenRouter', badge: 'FREE', color: '#8b5cf6', desc: 'Many free models' },
-                      { id: 'claude', name: 'Claude', badge: 'PAID', color: '#f97316', desc: 'Anthropic · Most capable' },
+                      { id: 'openrouter', name: 'OpenRouter', badge: 'PRIMARY', color: '#8b5cf6', desc: 'Gemini 2.5 Flash · Best value' },
+                      { id: 'groq', name: 'Groq', badge: 'BACKUP', color: '#10b981', desc: 'Llama 3.3 · Auto-fallback' },
                     ].map(p => {
                       const active = (settings.aiProvider || 'groq') === p.id
                       return (
@@ -281,8 +279,25 @@ export default function SettingsTab() {
 
                 <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
 
+                {/* OpenRouter */}
+                {(settings.aiProvider || 'openrouter') === 'openrouter' && <>
+                  <InputSetting label="OpenRouter API Key" desc="Get at openrouter.ai/keys — pay-per-use, no subscription" value={settings.openrouterApiKey || ''} onChange={v => save('openrouterApiKey', v)} type="password" placeholder="sk-or-..." />
+                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                    <div className="settings-label">Model</div>
+                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.openrouterModel || 'google/gemini-2.5-flash'} onChange={e => save('openrouterModel', e.target.value)}>
+                      <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
+                      <option value="google/gemini-2.5-flash:free">Gemini 2.5 Flash (Free tier)</option>
+                      <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
+                      <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (Free)</option>
+                    </select>
+                  </div>
+                  <div style={{ padding: '8px 12px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
+                    <strong style={{ color: 'var(--text)' }}>Gemini 2.5 Flash</strong> — ~$0.30/M input · $2.50/M output. If this fails, JARVIS automatically falls back to Groq.
+                  </div>
+                </>}
+
                 {/* Groq */}
-                {(settings.aiProvider || 'groq') === 'groq' && <>
+                {settings.aiProvider === 'groq' && <>
                   <InputSetting label="Groq API Key" desc="Free at console.groq.com — no credit card needed" value={settings.groqApiKey || ''} onChange={v => save('groqApiKey', v)} type="password" placeholder="gsk_..." />
                   <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
                     <div className="settings-label">Model</div>
@@ -295,39 +310,12 @@ export default function SettingsTab() {
                   </div>
                 </>}
 
-                {/* Gemini */}
-                {settings.aiProvider === 'gemini' && <>
-                  <InputSetting label="Gemini API Key" desc="Free at aistudio.google.com/app/apikey — 15 req/min, 1M tokens/day" value={settings.geminiApiKey || ''} onChange={v => save('geminiApiKey', v)} type="password" placeholder="AIza..." />
-                  <div style={{ padding: '8px 12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)' }}>
-                    Uses <strong style={{ color: 'var(--text)' }}>Gemini 1.5 Flash</strong> — Google's fastest free model.
+                {/* Groq backup key (always shown when OpenRouter is active) */}
+                {(settings.aiProvider || 'openrouter') === 'openrouter' && (
+                  <div style={{ marginTop: 8 }}>
+                    <InputSetting label="Groq API Key (Fallback)" desc="Optional — JARVIS auto-switches to Groq if OpenRouter fails" value={settings.groqApiKey || ''} onChange={v => save('groqApiKey', v)} type="password" placeholder="gsk_..." />
                   </div>
-                </>}
-
-                {/* OpenRouter */}
-                {settings.aiProvider === 'openrouter' && <>
-                  <InputSetting label="OpenRouter API Key" desc="Free at openrouter.ai/keys — access many free models" value={settings.openrouterApiKey || ''} onChange={v => save('openrouterApiKey', v)} type="password" placeholder="sk-or-..." />
-                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                    <div className="settings-label">Model</div>
-                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free'} onChange={e => save('openrouterModel', e.target.value)}>
-                      <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (Free)</option>
-                      <option value="google/gemma-3-27b-it:free">Gemma 3 27B (Free)</option>
-                      <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (Free)</option>
-                    </select>
-                  </div>
-                </>}
-
-                {/* Claude */}
-                {settings.aiProvider === 'claude' && <>
-                  <InputSetting label="Claude API Key" desc="Paid — get at console.anthropic.com" value={settings.claudeApiKey || ''} onChange={v => save('claudeApiKey', v)} type="password" placeholder="sk-ant-..." />
-                  <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                    <div className="settings-label">Model</div>
-                    <select className="input" style={{ width: '100%', fontSize: 13 }} value={settings.claudeModel || 'claude-sonnet-4-6'} onChange={e => save('claudeModel', e.target.value)}>
-                      <option value="claude-opus-4-6">Claude Opus 4.6 (Best)</option>
-                      <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Balanced)</option>
-                      <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
-                    </select>
-                  </div>
-                </>}
+                )}
 
                 <div style={{ marginTop: 12, padding: 10, background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
                   All keys are stored only in your browser's localStorage and sent directly to the provider — never to any third party.

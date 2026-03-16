@@ -7,9 +7,26 @@ import { useGmail } from '../hooks/useGmail'
 
 // ── Provider configs ───────────────────────────────────────────
 const PROVIDERS = {
+  openrouter: {
+    name: 'OpenRouter',
+    badge: 'PRIMARY',
+    badgeColor: '#8b5cf6',
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    format: 'openai',
+    keyName: 'openrouterApiKey',
+    modelKey: 'openrouterModel',
+    models: [
+      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended)' },
+      { id: 'google/gemini-2.5-flash:free', label: 'Gemini 2.5 Flash (Free tier)' },
+      { id: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash' },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)' },
+    ],
+    signupUrl: 'https://openrouter.ai/keys',
+    signupLabel: 'openrouter.ai → free API key',
+  },
   groq: {
     name: 'Groq',
-    badge: 'FREE',
+    badge: 'BACKUP',
     badgeColor: '#10b981',
     url: 'https://api.groq.com/openai/v1/chat/completions',
     format: 'openai',
@@ -23,50 +40,6 @@ const PROVIDERS = {
     ],
     signupUrl: 'https://console.groq.com',
     signupLabel: 'console.groq.com → free signup',
-  },
-  gemini: {
-    name: 'Gemini',
-    badge: 'FREE',
-    badgeColor: '#10b981',
-    url: null, // built with key in URL
-    format: 'gemini',
-    keyName: 'geminiApiKey',
-    modelKey: null,
-    models: [],
-    signupUrl: 'https://aistudio.google.com/app/apikey',
-    signupLabel: 'aistudio.google.com → Get API key',
-  },
-  openrouter: {
-    name: 'OpenRouter',
-    badge: 'FREE MODELS',
-    badgeColor: '#8b5cf6',
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    format: 'openai',
-    keyName: 'openrouterApiKey',
-    modelKey: 'openrouterModel',
-    models: [
-      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)' },
-      { id: 'google/gemma-3-27b-it:free', label: 'Gemma 3 27B (Free)' },
-      { id: 'mistralai/mistral-7b-instruct:free', label: 'Mistral 7B (Free)' },
-    ],
-    signupUrl: 'https://openrouter.ai/keys',
-    signupLabel: 'openrouter.ai → free API key',
-  },
-  claude: {
-    name: 'Claude',
-    badge: 'PAID',
-    badgeColor: '#f97316',
-    url: 'https://api.anthropic.com/v1/messages',
-    format: 'claude',
-    keyName: 'claudeApiKey',
-    modelKey: 'claudeModel',
-    models: [
-      { id: 'claude-opus-4-6', label: 'Claude Opus 4.6 (Best)' },
-      { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Balanced)' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (Fast)' },
-    ],
-    signupUrl: 'https://console.anthropic.com',
-    signupLabel: 'console.anthropic.com',
   },
 }
 
@@ -180,62 +153,35 @@ async function callAI(provider, settings, messages, systemPrompt) {
 
   if (!key) throw new Error(`No ${cfg.name} API key set. Go to Settings → AI.`)
 
-  // ── Groq / OpenRouter (OpenAI-compatible) ──
-  if (cfg.format === 'openai') {
-    const res = await fetch(cfg.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'system', content: systemPrompt }, ...messages],
-        max_tokens: 1024,
-        temperature: 0.7,
-      }),
-    })
-    if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || `${cfg.name} error ${res.status}`) }
-    const data = await res.json()
-    return data.choices?.[0]?.message?.content || ''
-  }
+  const res = await fetch(cfg.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      max_tokens: 1024,
+      temperature: 0.7,
+    }),
+  })
+  if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || `${cfg.name} error ${res.status}`) }
+  const data = await res.json()
+  return data.choices?.[0]?.message?.content || ''
+}
 
-  // ── Gemini ──
-  if (cfg.format === 'gemini') {
-    const geminiModel = 'gemini-3.1-flash-lite-preview'
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${key}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: messages.map(m => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        })),
-        tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
-      }),
-    })
-    if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || `Gemini error ${res.status}`) }
-    const data = await res.json()
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-  }
+// Calls OpenRouter (Gemini 2.5 Flash) with automatic Groq fallback
+async function callAIWithFallback(settings, messages, systemPrompt) {
+  const primaryProvider = settings.aiProvider || 'openrouter'
 
-  // ── Claude ──
-  if (cfg.format === 'claude') {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({ model, max_tokens: 1024, system: systemPrompt, messages }),
-    })
-    if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || `Claude error ${res.status}`) }
-    const data = await res.json()
-    return data.content?.[0]?.text || ''
+  try {
+    return await callAI(primaryProvider, settings, messages, systemPrompt)
+  } catch (primaryErr) {
+    // Fall back to Groq if primary fails and Groq is configured
+    if (primaryProvider !== 'groq' && settings.groqApiKey) {
+      console.warn(`[JARVIS] ${primaryErr.message} — falling back to Groq`)
+      return await callAI('groq', settings, messages, systemPrompt)
+    }
+    throw primaryErr
   }
-
-  throw new Error('Unknown provider')
 }
 
 // ── Component ──────────────────────────────────────────────────
@@ -502,7 +448,7 @@ export default function JarvisTab() {
           .map(m => ({ role: m.role, content: m.content })),
       ]
 
-      const reply = await callAI(provider, settings, apiMessages, systemPrompt)
+      const reply = await callAIWithFallback(settings, apiMessages, systemPrompt)
 
       const assistantMsg = {
         id: Date.now() + 1, role: 'assistant', content: reply,
