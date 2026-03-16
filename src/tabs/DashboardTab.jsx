@@ -776,22 +776,24 @@ function StocksWidget({ watchedStocks }) {
     const list = symbols.split(',').map(s => s.trim()).filter(Boolean)
 
     try {
-      // ── Attempt 1: server-side proxy (works in production)
+      // ── Attempt 1: server-side proxy (uses Yahoo Finance crumb auth)
       let finalQuotes = null
+      let proxyError  = null
       try {
-        const r = await fetch(`/api/stocks?symbols=${encodeURIComponent(symbols)}`, { signal: AbortSignal.timeout(10000) })
+        const r = await fetch(`/api/stocks?symbols=${encodeURIComponent(symbols)}`, { signal: AbortSignal.timeout(15000) })
         const data = await r.json()
         if (r.ok && data.quotes?.length > 0) finalQuotes = data.quotes
-      } catch { /* proxy unavailable in local dev — fall through */ }
+        else proxyError = data.error || data.errors?.[0] || (r.ok ? 'no quotes returned' : `HTTP ${r.status}`)
+      } catch (e) { proxyError = e.message }
 
-      // ── Attempt 2: direct browser fetch (Yahoo Finance allows CORS for v8/chart)
+      // ── Attempt 2: direct browser fetch (fallback for local dev / CORS-ok environments)
       if (!finalQuotes) {
         const results = await Promise.allSettled(list.map(fetchTickerDirect))
         const good = results.filter(r => r.status === 'fulfilled').map(r => r.value)
         if (good.length > 0) finalQuotes = good
         else {
           const errs = results.map(r => r.reason?.message).filter(Boolean)
-          throw new Error(errs[0] || 'All tickers failed')
+          throw new Error(proxyError || errs[0] || 'All tickers failed')
         }
       }
 
