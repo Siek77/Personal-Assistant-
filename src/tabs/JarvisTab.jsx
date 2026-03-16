@@ -199,7 +199,7 @@ async function callAI(provider, settings, messages, systemPrompt) {
 
   // ── Gemini ──
   if (cfg.format === 'gemini') {
-    const geminiModel = 'gemini-2.5-flash-lite'
+    const geminiModel = 'gemini-3.1-flash-lite-preview'
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${key}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
