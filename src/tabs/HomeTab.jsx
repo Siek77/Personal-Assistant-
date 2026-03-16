@@ -248,7 +248,7 @@ export default function HomeTab() {
     setLoading(true)
     setError(null)
     try {
-      const r = await fetch(`${haUrl}/api/states`, {
+      const r = await fetch(`/api/ha-proxy?haUrl=${encodeURIComponent(haUrl)}&path=api/states`, {
         headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json', ...cfHeaders },
         signal: AbortSignal.timeout(10000),
       })
@@ -283,7 +283,7 @@ export default function HomeTab() {
     const d = domain(entity.entity_id)
     setPending(p => ({ ...p, [entity.entity_id]: true }))
     try {
-      await fetch(`${haUrl}/api/services/${d}/${service}`, {
+      await fetch(`/api/ha-proxy?haUrl=${encodeURIComponent(haUrl)}&path=api/services/${d}/${service}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json', ...cfHeaders },
         body: JSON.stringify({ entity_id: entity.entity_id, ...data }),

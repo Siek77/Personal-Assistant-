@@ -1242,7 +1242,7 @@ function ColorLightsWidget({ haUrl, haToken }) {
     if (!base || !haToken) return
     setLoading(true)
     try {
-      const r = await fetch(`${base}/api/states`, { headers: { Authorization: `Bearer ${haToken}` }, signal: AbortSignal.timeout(6000) })
+      const r = await fetch(`/api/ha-proxy?haUrl=${encodeURIComponent(base)}&path=api/states`, { headers: { Authorization: `Bearer ${haToken}` }, signal: AbortSignal.timeout(6000) })
       if (!r.ok) return
       const states = await r.json()
       setLights(states.filter(e => e.entity_id.startsWith('light.') && isColorCapable(e)))
@@ -1254,7 +1254,7 @@ function ColorLightsWidget({ haUrl, haToken }) {
   const callHA = async (entityId, service, body) => {
     setPending(p => ({ ...p, [entityId]: true }))
     try {
-      await fetch(`${base}/api/services/light/${service}`, {
+      await fetch(`/api/ha-proxy?haUrl=${encodeURIComponent(base)}&path=api/services/light/${service}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity_id: entityId, ...body }),
