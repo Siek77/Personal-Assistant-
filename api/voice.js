@@ -18,6 +18,7 @@
 //   USER_FACTS     — comma-separated facts (only used if SYNC_KEY not set)
 
 import { list } from '@vercel/blob'
+import { fetchBlobJson } from './blob-utils'
 
 // Fetch the N most recent blob conversations for prior-session context
 async function fetchRecentBlobConversations(syncKey, limit = 3) {
@@ -28,7 +29,7 @@ async function fetchRecentBlobConversations(syncKey, limit = 3) {
       .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
       .slice(0, limit)
     const results = await Promise.all(
-      recent.map(b => fetch(b.url).then(r => r.json()).catch(() => null))
+      recent.map(b => fetchBlobJson(b.url).catch(() => null))
     )
     return results.filter(Boolean).reverse() // oldest first so context reads naturally
   } catch {
@@ -88,8 +89,7 @@ async function fetchSyncedData(syncKey) {
   try {
     const { blobs } = await list({ prefix: `jarvis-sync/${syncKey}.json` })
     if (!blobs.length) return null
-    const resp = await fetch(blobs[0].url)
-    return resp.ok ? resp.json() : null
+    return await fetchBlobJson(blobs[0].url)
   } catch {
     return null
   }

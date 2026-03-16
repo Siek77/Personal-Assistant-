@@ -83,7 +83,7 @@ async function persistState(clientId, payload) {
 
   const savedAt = new Date().toISOString()
   await put(blobPath, JSON.stringify({ ...payload, savedAt }), {
-    access: 'public',
+    access: 'private',
     contentType: 'application/json',
     addRandomSuffix: false,
   })

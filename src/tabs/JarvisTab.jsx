@@ -183,7 +183,7 @@ export default function JarvisTab() {
     try {
       const convList = await conversations.listConversations()
       for (const meta of convList) {
-        const data = await fetch(meta.url).then(r => r.json()).catch(() => null)
+        const data = await conversations.getConversation(meta.id).catch(() => null)
         if (data?.messages) {
           await drive.saveConversation(meta.id, data.messages)
         }

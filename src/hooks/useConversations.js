@@ -50,10 +50,24 @@ export function useConversations() {
     const convs = await listConversations()
     const recent = convs.slice(0, limit)
     const results = await Promise.all(
-      recent.map(c => fetch(c.url).then(r => r.json()).catch(() => null))
+      recent.map(c =>
+        fetch(`/api/conversations?key=${encodeURIComponent(getOrCreateClientId())}&id=${encodeURIComponent(c.id)}`)
+          .then(r => r.json())
+          .then(data => data.conversation || null)
+          .catch(() => null)
+      )
     )
     return results.filter(Boolean).reverse() // oldest first for context
   }, [listConversations])
+
+  const getConversation = useCallback(async (id) => {
+    const key = await getKey()
+    if (!key || !id) return null
+    const r = await fetch(`/api/conversations?key=${encodeURIComponent(key)}&id=${encodeURIComponent(id)}`)
+    const data = await r.json()
+    if (!r.ok) throw new Error(data.error || 'Load failed')
+    return data.conversation || null
+  }, [])
 
   // Delete conversations by ID
   const deleteConversations = useCallback(async (ids) => {
@@ -79,6 +93,7 @@ export function useConversations() {
     storageInfo,
     saveConversation,
     loadRecentConversations,
+    getConversation,
     listConversations,
     deleteConversations,
     refreshStorage,

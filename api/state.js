@@ -1,4 +1,5 @@
 import { list, put, del } from '@vercel/blob'
+import { fetchBlobJson } from './blob-utils'
 
 const MAX_PAYLOAD_BYTES = 512 * 1024
 
@@ -22,8 +23,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const { blobs } = await list({ prefix: blobPath })
     if (!blobs.length) return res.status(200).json({ data: null })
-    const resp = await fetch(blobs[0].url)
-    const data = await resp.json()
+    const data = await fetchBlobJson(blobs[0].url)
     return res.status(200).json({ data })
   }
 
@@ -38,7 +38,7 @@ export default async function handler(req, res) {
 
     const savedAt = new Date().toISOString()
     await put(blobPath, JSON.stringify({ ...body, savedAt }), {
-      access: 'public',
+      access: 'private',
       contentType: 'application/json',
       addRandomSuffix: false,
     })

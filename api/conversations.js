@@ -8,6 +8,7 @@
 // DELETE ?key=...        body:{ids:[...]}             → { ok, deleted }
 
 import { put, list, del } from '@vercel/blob'
+import { fetchBlobJson } from './blob-utils'
 
 const LIMIT_BYTES = 500 * 1024 * 1024 // 500 MB soft cap
 const KEY_PATTERN = /^[a-zA-Z0-9_-]{8,120}$/
@@ -28,13 +29,20 @@ export default async function handler(req, res) {
   // ── GET — list all conversations with storage totals ──
   if (req.method === 'GET') {
     try {
+      const { id } = req.query
+      if (id) {
+        const { blobs } = await list({ prefix: `${prefix}${id}.json` })
+        if (!blobs.length) return res.status(404).json({ error: 'Conversation not found' })
+        const conversation = await fetchBlobJson(blobs[0].url)
+        return res.status(200).json({ conversation })
+      }
+
       const { blobs } = await list({ prefix, limit: 1000 })
       const conversations = blobs
         .map(b => ({
           id: b.pathname.replace(prefix, '').replace('.json', ''),
           uploadedAt: b.uploadedAt,
           size: b.size,
-          url: b.url,
         }))
         .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt))
       const totalBytes = blobs.reduce((sum, b) => sum + b.size, 0)
@@ -65,7 +73,7 @@ export default async function handler(req, res) {
       })
 
       await put(path, payload, {
-        access: 'public',
+        access: 'private',
         contentType: 'application/json',
         addRandomSuffix: false,
       })
