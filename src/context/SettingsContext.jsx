@@ -3,7 +3,7 @@ import { createContext, useContext, useState, useEffect } from 'react'
 const SettingsContext = createContext()
 
 const DEFAULTS = {
-  aiProvider: 'groq',           // 'groq' | 'claude' | 'gemini' | 'openrouter'
+  aiProvider: 'gemini',         // 'groq' | 'claude' | 'gemini' | 'openrouter'
   groqApiKey: '',
   groqModel: 'llama-3.3-70b-versatile',
   claudeApiKey: '',

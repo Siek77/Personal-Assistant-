@@ -199,7 +199,7 @@ async function callAI(provider, settings, messages, systemPrompt) {
 
   // ── Gemini ──
   if (cfg.format === 'gemini') {
-    const geminiModel = 'gemini-1.5-flash'
+    const geminiModel = 'gemini-2.0-flash'
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${key}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -209,6 +209,7 @@ async function callAI(provider, settings, messages, systemPrompt) {
           role: m.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: m.content }],
         })),
+        tools: [{ google_search: {} }],
         generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
       }),
     })
