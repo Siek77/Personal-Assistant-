@@ -231,8 +231,15 @@ export default function HomeTab() {
   const haUrl = (settings.haUrl || '').replace(/\/$/, '')
   const haToken = settings.haToken || ''
 
+  // Detect mixed-content: app is HTTPS but HA URL is HTTP — blocked on iOS Safari
+  const isMixedContent = window.location.protocol === 'https:' && haUrl.startsWith('http://')
+
   const fetchStates = useCallback(async () => {
     if (!haUrl || !haToken) return
+    if (isMixedContent) {
+      setError('mixed-content')
+      return
+    }
     setLoading(true)
     setError(null)
     try {
@@ -358,11 +365,26 @@ export default function HomeTab() {
         </button>
       </div>
 
-      {error && (
+      {error === 'mixed-content' ? (
+        <div style={{ padding: '14px 16px', background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderRadius: 10, fontSize: 12, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.8 }}>
+          <div style={{ fontWeight: 700, color: '#f97316', marginBottom: 8, fontSize: 13 }}>⚠️ Blocked on iPad / iOS Safari</div>
+          <p style={{ margin: '0 0 8px' }}>
+            Your HA URL is <code style={{ background: 'var(--bg3)', padding: '1px 5px', borderRadius: 4 }}>http://</code> but this app runs on <code style={{ background: 'var(--bg3)', padding: '1px 5px', borderRadius: 4 }}>https://</code>. iOS Safari blocks mixed-content requests, so iPad can't reach the local HA server.
+          </p>
+          <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>Fix options:</div>
+          <ol style={{ margin: 0, paddingLeft: 18 }}>
+            <li><strong>Nabu Casa</strong> — subscribe at <code style={{ background: 'var(--bg3)', padding: '1px 4px', borderRadius: 3 }}>nabucasa.com</code>, gives you a secure <code>https://</code> remote URL</li>
+            <li><strong>Cloudflare Tunnel</strong> — free, wraps your local HA in <code>https://</code> accessible from anywhere</li>
+            <li><strong>Self-signed cert on HA</strong> — enable HTTPS in HA with a local cert (iOS requires trusting it first)</li>
+            <li><strong>Use IP on same Wi-Fi</strong> — only works if your app is also on <code>http://</code> (self-hosted)</li>
+          </ol>
+          <div style={{ marginTop: 8, color: '#f97316' }}>Once you have an <code>https://</code> URL, update it in <strong>Settings → Home</strong>.</div>
+        </div>
+      ) : error ? (
         <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, fontSize: 12, color: '#ef4444', marginBottom: 16 }}>
           ⚠️ {error}
         </div>
-      )}
+      ) : null}
 
       {/* Quick stats */}
       {entities.length > 0 && (

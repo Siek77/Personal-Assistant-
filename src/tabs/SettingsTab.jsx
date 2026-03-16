@@ -407,6 +407,9 @@ export default function SettingsTab() {
     - https://jarvis-dashboard-fawn.vercel.app`}</pre>
                   </div>
                 </div>
+                <div style={{ marginTop: 10, padding: 12, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                  <strong style={{ color: '#ef4444' }}>iPad / iOS Safari:</strong> This app runs on <code style={{ background: 'var(--bg3)', padding: '1px 4px', borderRadius: 3 }}>https://</code> — iOS blocks all <code>http://</code> requests as mixed content. You must use an <strong>https:// URL</strong> for HA (Nabu Casa, Cloudflare Tunnel, or self-signed cert). A plain <code>http://</code> local address will only work on desktop.
+                </div>
               </div>
             )}
 
