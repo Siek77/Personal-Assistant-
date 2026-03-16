@@ -398,6 +398,21 @@ export default function SettingsTab() {
                   type="password"
                   placeholder="eyJ..."
                 />
+                <InputSetting
+                  label="Cloudflare Access Client ID"
+                  desc="Optional — if HA is behind Cloudflare Access. Zero Trust → Service Auth → Service Tokens."
+                  value={settings.cfClientId || ''}
+                  onChange={v => save('cfClientId', v)}
+                  placeholder="abc123.access"
+                />
+                <InputSetting
+                  label="Cloudflare Access Client Secret"
+                  desc="The secret from the same Cloudflare service token."
+                  value={settings.cfClientSecret || ''}
+                  onChange={v => save('cfClientSecret', v)}
+                  type="password"
+                  placeholder="••••••••"
+                />
                 <div style={{ marginTop: 16, padding: 12, background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 8 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--orange)', marginBottom: 8 }}>CORS Configuration Required</div>
                   <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>

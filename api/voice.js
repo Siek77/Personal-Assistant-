@@ -116,12 +116,18 @@ export default async function handler(req, res) {
   if (!groqKey) return res.status(500).json({ error: 'GROQ_API_KEY not configured' })
 
   // ── Helper: fetch HA states with a 3s timeout ──
+  const cfClientId = process.env.CF_ACCESS_CLIENT_ID || ''
+  const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET || ''
+  const cfHeaders = cfClientId && cfClientSecret
+    ? { 'CF-Access-Client-Id': cfClientId, 'CF-Access-Client-Secret': cfClientSecret }
+    : {}
+
   async function fetchHaStates(url, token) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 3000)
     try {
       const r = await fetch(`${url}/api/states`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, ...cfHeaders },
         signal: controller.signal,
       })
       return r.ok ? r.json() : null
@@ -358,6 +364,7 @@ STRICT voice rules — you are speaking through Amazon Alexa:
             headers: {
               Authorization: `Bearer ${haToken}`,
               'Content-Type': 'application/json',
+              ...cfHeaders,
             },
             body: JSON.stringify({ entity_id, ...service_data }),
           })

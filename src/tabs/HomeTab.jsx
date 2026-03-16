@@ -230,6 +230,11 @@ export default function HomeTab() {
 
   const haUrl = (settings.haUrl || '').replace(/\/$/, '')
   const haToken = settings.haToken || ''
+  const cfClientId = settings.cfClientId || ''
+  const cfClientSecret = settings.cfClientSecret || ''
+  const cfHeaders = cfClientId && cfClientSecret
+    ? { 'CF-Access-Client-Id': cfClientId, 'CF-Access-Client-Secret': cfClientSecret }
+    : {}
 
   // Detect mixed-content: app is HTTPS but HA URL is HTTP — blocked on iOS Safari
   const isMixedContent = window.location.protocol === 'https:' && haUrl.startsWith('http://')
@@ -244,7 +249,7 @@ export default function HomeTab() {
     setError(null)
     try {
       const r = await fetch(`${haUrl}/api/states`, {
-        headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json', ...cfHeaders },
         signal: AbortSignal.timeout(10000),
       })
       if (!r.ok) throw new Error(`HA returned ${r.status} — check URL and token`)
@@ -280,7 +285,7 @@ export default function HomeTab() {
     try {
       await fetch(`${haUrl}/api/services/${d}/${service}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${haToken}`, 'Content-Type': 'application/json', ...cfHeaders },
         body: JSON.stringify({ entity_id: entity.entity_id, ...data }),
         signal: AbortSignal.timeout(5000),
       })
