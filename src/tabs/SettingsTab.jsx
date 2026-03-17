@@ -204,11 +204,27 @@ export default function SettingsTab() {
     setTimeout(() => setSaved(false), 1500)
   }
 
+  const parseApiResponse = async (res, fallbackLabel) => {
+    const text = await res.text()
+    let data = null
+
+    try {
+      data = text ? JSON.parse(text) : {}
+    } catch {
+      if (!res.ok) throw new Error(text || `${fallbackLabel} failed (${res.status})`)
+      throw new Error(text || `${fallbackLabel} returned an invalid response`)
+    }
+
+    if (!res.ok) {
+      throw new Error(data?.error || `${fallbackLabel} failed (${res.status})`)
+    }
+
+    return data
+  }
+
   const loadCloudState = async (clientId) => {
     const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
-    const text = await res.text()
-    const data = text ? JSON.parse(text) : {}
-    if (!res.ok) throw new Error(data?.error || `State load failed (${res.status})`)
+    const data = await parseApiResponse(res, 'State load')
     return data?.data || null
   }
 
@@ -218,27 +234,21 @@ export default function SettingsTab() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildPersistencePayload(settings, memory)),
     })
-    const text = await res.text()
-    const data = text ? JSON.parse(text) : {}
-    if (!res.ok) throw new Error(data?.error || `State save failed (${res.status})`)
-    return data
+    return parseApiResponse(res, 'State save')
   }
 
   const copyConversations = async (fromKey, toKey) => {
     if (!fromKey || !toKey || fromKey === toKey) return 0
 
     const listRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}`)
-    const listText = await listRes.text()
-    const listData = listText ? JSON.parse(listText) : {}
-    if (!listRes.ok) throw new Error(listData?.error || `Conversation list failed (${listRes.status})`)
+    const listData = await parseApiResponse(listRes, 'Conversation list')
     const conversations = listData?.conversations || []
     let copied = 0
 
     for (const meta of conversations) {
       try {
         const convRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}&id=${encodeURIComponent(meta.id)}`)
-        const convText = await convRes.text()
-        const convData = convText ? JSON.parse(convText) : {}
+        const convData = await parseApiResponse(convRes, 'Conversation fetch')
         if (!convRes.ok) continue
         const conversation = convData?.conversation
         if (!conversation?.messages) continue
@@ -252,7 +262,7 @@ export default function SettingsTab() {
             savedAt: conversation.savedAt || meta.uploadedAt || new Date().toISOString(),
           }),
         })
-        if (!saveRes.ok) continue
+        await parseApiResponse(saveRes, 'Conversation save')
         copied += 1
       } catch {
         // Skip any single conversation that fails so shared settings sync can still succeed.
