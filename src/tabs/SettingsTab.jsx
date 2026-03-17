@@ -204,16 +204,55 @@ export default function SettingsTab() {
     setTimeout(() => setSaved(false), 1500)
   }
 
+  const loadCloudState = async (clientId) => {
+    const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
+    const data = await res.json()
+    return data?.data || null
+  }
+
+  const saveCloudState = async (clientId) => {
+    const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPersistencePayload(settings, memory)),
+    })
+    return res.json()
+  }
+
+  const copyConversations = async (fromKey, toKey) => {
+    if (!fromKey || !toKey || fromKey === toKey) return 0
+
+    const listRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}`)
+    const listData = await listRes.json()
+    const conversations = listData?.conversations || []
+    let copied = 0
+
+    for (const meta of conversations) {
+      const convRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}&id=${encodeURIComponent(meta.id)}`)
+      const convData = await convRes.json()
+      const conversation = convData?.conversation
+      if (!conversation?.messages) continue
+
+      await fetch(`/api/conversations?key=${encodeURIComponent(toKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: conversation.id || meta.id,
+          messages: conversation.messages,
+          savedAt: conversation.savedAt || meta.uploadedAt || new Date().toISOString(),
+        }),
+      })
+      copied += 1
+    }
+
+    return copied
+  }
+
   const pushSync = async () => {
     setSyncing(true)
     try {
       const clientId = getPersistenceKey()
-      const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPersistencePayload(settings, memory)),
-      })
-      const { savedAt } = await res.json()
+      const { savedAt } = await saveCloudState(clientId)
       localStorage.setItem('jarvis_last_synced', savedAt)
       setLastSynced(savedAt)
       setSyncStatus('✓ Synced to cloud!')
@@ -229,8 +268,7 @@ export default function SettingsTab() {
     setSyncing(true)
     try {
       const clientId = getPersistenceKey()
-      const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
-      const { data } = await res.json()
+      const data = await loadCloudState(clientId)
       if (!data?.settings && !data?.memory) { setSyncStatus('✗ No cloud data found yet for this assistant.'); return }
       applyPersistedPayload(data, { updateSettings, mergeRemoteMemory })
       const ts = data.savedAt || new Date().toISOString()
@@ -246,24 +284,62 @@ export default function SettingsTab() {
   }
 
   const applySyncCode = async () => {
+    const previousKey = getPersistenceKey()
     const normalized = setSyncCode(syncCodeInput)
     setSyncCodeInput(normalized)
-    setStorageKey(getPersistenceKey())
-    setSyncStatus(
-      normalized
-        ? '✓ Shared sync code applied. This device now points at the shared assistant state.'
-        : '✓ Shared sync code cleared. This device is back on its own local assistant identity.'
-    )
-    await pullSync()
+    const nextKey = getPersistenceKey()
+    setStorageKey(nextKey)
+
+    if (!normalized) {
+      setSyncStatus('✓ Shared sync code cleared. This device is back on its own local assistant identity.')
+      return
+    }
+
+    setSyncing(true)
+    try {
+      const cloudData = await loadCloudState(nextKey)
+      if (cloudData?.settings || cloudData?.memory) {
+        applyPersistedPayload(cloudData, { updateSettings, mergeRemoteMemory })
+        const ts = cloudData.savedAt || new Date().toISOString()
+        localStorage.setItem('jarvis_last_synced', ts)
+        setLastSynced(ts)
+        setSyncStatus('✓ Shared sync code applied. Pulled settings and memory from the cloud assistant.')
+      } else {
+        const { savedAt } = await saveCloudState(nextKey)
+        const copied = await copyConversations(previousKey, nextKey)
+        localStorage.setItem('jarvis_last_synced', savedAt)
+        setLastSynced(savedAt)
+        setSyncStatus(`✓ Shared sync code applied. Uploaded this device's settings and memory${copied ? ` and copied ${copied} conversations` : ''}.`)
+      }
+    } catch {
+      setSyncStatus('✗ Sync code applied, but cloud sync failed.')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncStatus(''), 5000)
+    }
   }
 
   const generateAndApplySyncCode = async () => {
+    const previousKey = getPersistenceKey()
     const nextCode = generateSyncCode()
     setSyncCodeInput(nextCode)
     const normalized = setSyncCode(nextCode)
-    setStorageKey(getPersistenceKey())
-    setSyncStatus(`✓ New sync code created: ${normalized}`)
-    await pullSync()
+    const nextKey = getPersistenceKey()
+    setStorageKey(nextKey)
+
+    setSyncing(true)
+    try {
+      const { savedAt } = await saveCloudState(nextKey)
+      const copied = await copyConversations(previousKey, nextKey)
+      localStorage.setItem('jarvis_last_synced', savedAt)
+      setLastSynced(savedAt)
+      setSyncStatus(`✓ New sync code created and uploaded. ${copied ? `Copied ${copied} conversations too.` : 'Current settings and memory are now shared.'}`)
+    } catch {
+      setSyncStatus('✗ Sync code created, but initial cloud upload failed.')
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncStatus(''), 5000)
+    }
   }
 
   const copySyncCode = async () => {
