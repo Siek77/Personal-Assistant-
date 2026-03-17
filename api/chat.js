@@ -1,5 +1,3 @@
-import { del, list, put } from '@vercel/blob'
-
 const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 const MAX_PAYLOAD_BYTES = 512 * 1024
@@ -76,21 +74,6 @@ Guidelines:
 - Format with markdown when it helps.`
 }
 
-async function persistState(clientId, payload) {
-  const blobPath = `jarvis-state/${clientId}.json`
-  const { blobs: existing } = await list({ prefix: blobPath })
-  if (existing.length) await del(existing.map(blob => blob.url))
-
-  const savedAt = new Date().toISOString()
-  await put(blobPath, JSON.stringify({ ...payload, savedAt }), {
-    access: 'private',
-    contentType: 'application/json',
-    addRandomSuffix: false,
-  })
-
-  return savedAt
-}
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -137,14 +120,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'OpenAI returned an empty response.' })
     }
 
-    const savedAt = await persistState(clientId, {
-      settings,
-      memory,
-      recentConv: messages.slice(-20),
-      ...context,
-    })
-
-    return res.status(200).json({ reply, model, savedAt })
+    return res.status(200).json({ reply, model, savedAt: new Date().toISOString() })
   } catch (error) {
     console.error('[chat] error:', error)
     return res.status(500).json({ error: error.message || 'Chat request failed' })

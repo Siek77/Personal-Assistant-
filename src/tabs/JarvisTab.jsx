@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
 import { useGoogleDrive } from '../hooks/useGoogleDrive'
-import { useConversations } from '../hooks/useConversations'
 import { useGmail } from '../hooks/useGmail'
 import { useMicrosoftMail } from '../hooks/useMicrosoftMail'
 import { getPersistenceKey } from '../utils/persistence'
@@ -20,8 +19,6 @@ const OPENAI_PROVIDER = {
   ],
 }
 
-const BLOB_ARCHIVE_THRESHOLD = 0.8
-const BLOB_ARCHIVE_TARGET = 0.6
 const EMAIL_RANGES = [
   { id: '7d', label: '7d', daysBack: 7 },
   { id: '30d', label: '30d', daysBack: 30 },
@@ -99,7 +96,6 @@ export default function JarvisTab() {
   const cfg = OPENAI_PROVIDER
 
   const drive = useGoogleDrive(settings.googleClientId || null)
-  const conversations = useConversations()
   const gmail = useGmail(settings.googleClientId || null)
   const outlook = useMicrosoftMail(settings.microsoftClientId || null)
 
@@ -119,15 +115,10 @@ export default function JarvisTab() {
   const [newFact, setNewFact] = useState('')
   const [showMemory, setShowMemory] = useState(false)
   const [saveStatus, setSaveStatus] = useState('')   // shown in header
-  const [saving, setSaving] = useState(false)
   const [driveStatus, setDriveStatus] = useState('')
   const [factsExpanded, setFactsExpanded] = useState(false)
   const [routinesExpanded, setRoutinesExpanded] = useState(false)
   const [driveConvsExpanded, setDriveConvsExpanded] = useState(false)
-  const [blobConvsExpanded, setBlobConvsExpanded] = useState(false)
-  const [blobConvs, setBlobConvs] = useState([])
-  const [archiving, setArchiving] = useState(false)
-  const [autoArchiving, setAutoArchiving] = useState(false)
   const [editingFactId, setEditingFactId] = useState(null)
   const [editingFactText, setEditingFactText] = useState('')
   const [driveConvs, setDriveConvs] = useState([])
@@ -159,10 +150,9 @@ export default function JarvisTab() {
     } catch { /* ignore */ }
   }, [messages])
 
-  // Load prior context — Drive-primary, Blob as fallback
+  // Load prior context from Google Drive
   useEffect(() => {
     ;(async () => {
-      // ── Google Drive conversations (primary) ──
       if (drive.isSignedIn) {
         try {
           setDriveStatus('Loading history…')
@@ -179,25 +169,8 @@ export default function JarvisTab() {
         }
         return
       }
-
-      // ── Blob fallback when Drive is unavailable ──
-      if (conversations.isAvailable) {
-        try {
-          setSaveStatus('Loading history…')
-          const convs = await conversations.loadRecentConversations(3)
-          const prior = convs
-            .flatMap(c => (c.messages || []).filter(m => m.id !== 'welcome').slice(-6))
-            .slice(-12)
-          priorMessagesRef.current = prior.map(m => ({ role: m.role, content: m.content }))
-          setSaveStatus(convs.length ? `${convs.length} session${convs.length > 1 ? 's' : ''} loaded` : '')
-          setTimeout(() => setSaveStatus(''), 3000)
-          conversations.listConversations().then(setBlobConvs).catch(() => {})
-        } catch {
-          setSaveStatus('')
-        }
-      }
     })()
-  }, [conversations.isAvailable, drive.isSignedIn])
+  }, [drive.isSignedIn])
 
   // Load Drive conversation list when signed in (for archive panel)
   useEffect(() => {
@@ -205,100 +178,14 @@ export default function JarvisTab() {
     drive.listAllConversations().then(setDriveConvs).catch(() => {})
   }, [drive.isSignedIn])
 
-  // Save after every AI reply — Drive-primary, Blob as fallback
+  // Save after every AI reply to Google Drive when connected
   const scheduleSave = useCallback((msgs) => {
     if (drive.isSignedIn) {
       drive.saveConversation(convIdRef.current, msgs)
         .then(() => { setDriveStatus('✓ Saved'); setTimeout(() => setDriveStatus(''), 2500) })
         .catch(e => { setDriveStatus('⚠️ ' + (e.message || 'Save failed')); setTimeout(() => setDriveStatus(''), 6000) })
-    } else if (conversations.isAvailable) {
-      setSaving(true)
-      conversations.saveConversation(convIdRef.current, msgs)
-        .then(() => { setSaveStatus('✓ Saved'); setTimeout(() => setSaveStatus(''), 2500) })
-        .catch(e => { setSaveStatus('⚠️ ' + (e.message || 'Save failed')); setTimeout(() => setSaveStatus(''), 6000) })
-        .finally(() => setSaving(false))
     }
-  }, [conversations.isAvailable, conversations.saveConversation, drive.isSignedIn, drive.saveConversation])
-
-  // Archive all blob conversations to Drive, then delete from blob
-  const archiveToDrive = useCallback(async () => {
-    if (!drive.isSignedIn || !conversations.isAvailable) return
-    setArchiving(true)
-    try {
-      const convList = await conversations.listConversations()
-      for (const meta of convList) {
-        const data = await conversations.getConversation(meta.id).catch(() => null)
-        if (data?.messages) {
-          await drive.saveConversation(meta.id, data.messages)
-        }
-      }
-      const ids = convList.map(c => c.id)
-      if (ids.length) await conversations.deleteConversations(ids)
-      setBlobConvs([])
-      setSaveStatus(`✓ Archived ${ids.length} conversations to Drive`)
-      setTimeout(() => setSaveStatus(''), 4000)
-    } catch (e) {
-      setSaveStatus('⚠️ Archive failed: ' + e.message)
-      setTimeout(() => setSaveStatus(''), 6000)
-    } finally {
-      setArchiving(false)
-    }
-  }, [drive.isSignedIn, drive.saveConversation, conversations])
-
-  const archiveOverflowToDrive = useCallback(async () => {
-    if (!drive.isSignedIn || !conversations.isAvailable || autoArchiving) return
-
-    const storage = conversations.storageInfo
-    if (!storage?.limitBytes || !storage?.totalBytes) return
-
-    const usageRatio = storage.totalBytes / storage.limitBytes
-    if (usageRatio < BLOB_ARCHIVE_THRESHOLD) return
-
-    setAutoArchiving(true)
-    setSaveStatus('Storage cap reached. Archiving older conversations…')
-
-    try {
-      const convList = await conversations.listConversations()
-      if (convList.length <= 1) return
-
-      const sortedOldestFirst = [...convList].sort((a, b) => new Date(a.uploadedAt) - new Date(b.uploadedAt))
-      const newestId = convList[0]?.id
-      let bytesToFree = storage.totalBytes - storage.limitBytes * BLOB_ARCHIVE_TARGET
-      const idsToArchive = []
-
-      for (const conv of sortedOldestFirst) {
-        if (conv.id === newestId) continue
-        idsToArchive.push(conv.id)
-        bytesToFree -= conv.size || 0
-        if (bytesToFree <= 0) break
-      }
-
-      if (!idsToArchive.length) return
-
-      for (const id of idsToArchive) {
-        const data = await conversations.getConversation(id).catch(() => null)
-        if (data?.messages) {
-          await drive.saveConversation(id, data.messages)
-        }
-      }
-
-      await conversations.deleteConversations(idsToArchive)
-      const refreshed = await conversations.listConversations()
-      setBlobConvs(refreshed)
-      setSaveStatus(`✓ Archived ${idsToArchive.length} older conversation${idsToArchive.length === 1 ? '' : 's'} to Drive`)
-      setTimeout(() => setSaveStatus(''), 5000)
-    } catch (e) {
-      setSaveStatus('⚠️ Auto-archive failed: ' + e.message)
-      setTimeout(() => setSaveStatus(''), 7000)
-    } finally {
-      setAutoArchiving(false)
-    }
-  }, [autoArchiving, conversations, drive.isSignedIn, drive.saveConversation])
-
-  useEffect(() => {
-    if (!drive.isSignedIn || !conversations.isAvailable || autoArchiving || archiving) return
-    archiveOverflowToDrive()
-  }, [archiveOverflowToDrive, archiving, autoArchiving, conversations.isAvailable, conversations.storageInfo, drive.isSignedIn])
+  }, [drive.isSignedIn, drive.saveConversation])
 
   // ── TTS ──
   const speak = useCallback((text) => {
@@ -572,25 +459,16 @@ export default function JarvisTab() {
             </div>
           </div>
 
-          {/* Blob save status */}
-          {conversations.isAvailable && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              {saveStatus && (
-                <span style={{ fontSize: 11, color: saveStatus.startsWith('✓') ? 'var(--green)' : 'var(--red)', whiteSpace: 'nowrap' }}>
-                  {saveStatus}
-                </span>
-              )}
-              <span title="Conversations stored in Vercel Blob (accessible by voice)"
-                style={{ fontSize: 13, opacity: saving ? 0.5 : 1 }}>
-                {saving ? '⏳' : '🗄️'}
-              </span>
-            </div>
+          {saveStatus && (
+            <span style={{ fontSize: 11, color: saveStatus.startsWith('✓') ? 'var(--green)' : 'var(--red)', whiteSpace: 'nowrap' }}>
+              {saveStatus}
+            </span>
           )}
 
-          {/* Drive button — archive / fallback only */}
+          {/* Drive button */}
           {settings.googleClientId && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              {!conversations.isAvailable && drive.isSignedIn && driveStatus && (
+              {drive.isSignedIn && driveStatus && (
                 <span style={{ fontSize: 11, color: driveStatus.startsWith('✓') ? 'var(--green)' : 'var(--red)', whiteSpace: 'nowrap' }}>
                   {driveStatus}
                 </span>
@@ -598,7 +476,7 @@ export default function JarvisTab() {
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => drive.isSignedIn ? drive.signOut() : drive.signIn()}
-                title={drive.isSignedIn ? 'Drive connected — use as archive' : 'Connect Google Drive (for archiving)'}
+                title={drive.isSignedIn ? 'Drive connected' : 'Connect Google Drive'}
                 style={{ fontSize: 16, opacity: drive.signInStatus === 'idle' ? 0.4 : 1 }}
               >
                 {drive.signInStatus === 'signing-in' ? '⏳' : drive.isSignedIn ? '🟢' : '☁️'}
@@ -802,84 +680,8 @@ export default function JarvisTab() {
           </div>
         )}
 
-        {/* Blob conversation storage */}
-        {conversations.isAvailable && (
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>🗄️ Conversations</h4>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="badge badge-blue">{blobConvs.length}</span>
-                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
-                  title="Refresh"
-                  onClick={() => conversations.listConversations().then(setBlobConvs).catch(() => {})}>
-                  ↻
-                </button>
-                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
-                  onClick={() => setBlobConvsExpanded(e => !e)}>
-                  {blobConvsExpanded ? '▲' : '▼'}
-                </button>
-              </div>
-            </div>
-
-            {/* Storage gauge */}
-            {conversations.storageInfo && (() => {
-              const { totalBytes, limitBytes } = conversations.storageInfo
-              const pct = Math.min(100, (totalBytes / limitBytes) * 100)
-              const mb = (totalBytes / 1024 / 1024).toFixed(1)
-              const limitMb = (limitBytes / 1024 / 1024).toFixed(0)
-              const color = pct > 80 ? 'var(--red)' : pct > 60 ? '#f97316' : 'var(--blue)'
-              return (
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text2)', marginBottom: 3 }}>
-                    <span>{mb} MB used</span>
-                    <span>{limitMb} MB limit</span>
-                  </div>
-                  <div style={{ height: 4, borderRadius: 2, background: 'var(--bg3)', overflow: 'hidden' }}>
-                    <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 2, transition: 'width 0.3s' }} />
-                  </div>
-                  {pct > 80 && (
-                    <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 4 }}>
-                      Storage {pct.toFixed(0)}% full — archive old conversations to free space
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
-
-            {/* Archive to Drive button */}
-            {drive.isSignedIn && blobConvs.length > 0 && (
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={archiveToDrive}
-                disabled={archiving || autoArchiving}
-                style={{ fontSize: 11, width: '100%', marginBottom: 8 }}
-                title="Move all blob conversations to Google Drive and free up space"
-              >
-                {archiving || autoArchiving ? '⏳ Archiving…' : `📦 Archive all ${blobConvs.length} to Drive`}
-              </button>
-            )}
-
-            {blobConvsExpanded && (
-              blobConvs.length === 0
-                ? <p style={{ fontSize: 11, color: 'var(--text2)' }}>No conversations saved yet.</p>
-                : blobConvs.map(c => (
-                  <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
-                    <span style={{ flex: 1, color: 'var(--text3)' }}>
-                      {new Date(c.uploadedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </span>
-                    <span style={{ color: 'var(--text2)', fontSize: 10 }}>{(c.size / 1024).toFixed(0)} KB</span>
-                    <button onClick={async () => {
-                      await conversations.deleteConversations([c.id])
-                      setBlobConvs(prev => prev.filter(x => x.id !== c.id))
-                    }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: 13, opacity: 0.7, padding: '0 2px' }}>🗑</button>
-                  </div>
-                ))
-            )}
-          </div>
-        )}
-
-        {/* Drive history (shown when blob unavailable, or as archive reference) */}
-        {drive.isSignedIn && !conversations.isAvailable && (
+        {/* Drive history */}
+        {drive.isSignedIn && (
           <div className="card" style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: driveConvsExpanded ? 8 : 0 }}>
               <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>🗂️ Drive History</h4>
