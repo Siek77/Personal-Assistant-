@@ -4,6 +4,7 @@ import { useMemory } from '../context/MemoryContext'
 import { useGoogleDrive } from '../hooks/useGoogleDrive'
 import { useConversations } from '../hooks/useConversations'
 import { useGmail } from '../hooks/useGmail'
+import { useMicrosoftMail } from '../hooks/useMicrosoftMail'
 import { getOrCreateClientId } from '../utils/persistence'
 
 const OPENAI_PROVIDER = {
@@ -65,6 +66,7 @@ export default function JarvisTab() {
   const drive = useGoogleDrive(settings.googleClientId || null)
   const conversations = useConversations()
   const gmail = useGmail(settings.googleClientId || null)
+  const outlook = useMicrosoftMail(settings.microsoftClientId || null)
 
   // Stable conversation ID for this session
   const convIdRef = useRef(String(Date.now()))
@@ -99,6 +101,7 @@ export default function JarvisTab() {
   })
   const [emailsExpanded, setEmailsExpanded] = useState(false)
   const [emailLoading, setEmailLoading] = useState(false)
+  const [yahooStatus, setYahooStatus] = useState('idle')
   const [ttsEnabled, setTtsEnabled] = useState(settings.ttsEnabled || false)
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef(null)
@@ -327,24 +330,87 @@ export default function JarvisTab() {
 
   // ── Gmail fetch ──
   const loadEmails = useCallback(async () => {
-    if (!gmail.isSignedIn) return
     setEmailLoading(true)
     try {
-      const fetched = await gmail.fetchEmails(10)
+      const providers = []
+
+      if (gmail.isSignedIn) {
+        providers.push(
+          gmail.fetchEmails(10).then(items => items.map(item => ({ ...item, accountType: 'gmail' })))
+        )
+      }
+
+      if (outlook.isSignedIn) {
+        providers.push(
+          outlook.fetchEmails(10).then(items => items.map(item => ({ ...item, accountType: 'outlook' })))
+        )
+      }
+
+      if (settings.outlookEmail && settings.outlookPassword) {
+        providers.push(
+          fetch('/api/email-imap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              host: 'outlook.office365.com',
+              port: 993,
+              secure: true,
+              username: settings.outlookEmail,
+              password: settings.outlookPassword,
+              maxResults: 10,
+            }),
+          })
+            .then(async res => {
+              const data = await res.json()
+              if (!res.ok) throw new Error(data.error || 'Outlook IMAP fetch failed')
+              return (data.emails || []).map(item => ({ ...item, accountType: 'outlook-work' }))
+            })
+        )
+      }
+
+      if (settings.yahooEmail && settings.yahooAppPassword) {
+        setYahooStatus('loading')
+        providers.push(
+          fetch('/api/email-imap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              host: 'imap.mail.yahoo.com',
+              port: 993,
+              secure: true,
+              username: settings.yahooEmail,
+              password: settings.yahooAppPassword,
+              maxResults: 10,
+            }),
+          })
+            .then(async res => {
+              const data = await res.json()
+              if (!res.ok) throw new Error(data.error || 'Yahoo fetch failed')
+              return (data.emails || []).map(item => ({ ...item, accountType: 'yahoo' }))
+            })
+            .finally(() => setYahooStatus('idle'))
+        )
+      }
+
+      const fetched = (await Promise.allSettled(providers))
+        .filter(result => result.status === 'fulfilled')
+        .flatMap(result => result.value)
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+
       setEmails(fetched)
       localStorage.setItem('jarvis_email_summary', JSON.stringify(fetched))
       window.dispatchEvent(new CustomEvent('jarvis:email-updated'))
     } catch (e) {
-      console.error('Gmail fetch failed:', e)
+      console.error('Email fetch failed:', e)
     } finally {
       setEmailLoading(false)
     }
-  }, [gmail.isSignedIn, gmail.fetchEmails])
+  }, [gmail.isSignedIn, gmail.fetchEmails, outlook.isSignedIn, outlook.fetchEmails, settings.outlookEmail, settings.outlookPassword, settings.yahooEmail, settings.yahooAppPassword])
 
   // Auto-load emails on sign-in
   useEffect(() => {
-    if (gmail.isSignedIn && !emails.length) loadEmails()
-  }, [gmail.isSignedIn])
+    if ((gmail.isSignedIn || outlook.isSignedIn || (settings.outlookEmail && settings.outlookPassword) || (settings.yahooEmail && settings.yahooAppPassword)) && !emails.length) loadEmails()
+  }, [gmail.isSignedIn, outlook.isSignedIn, settings.outlookEmail, settings.outlookPassword, settings.yahooEmail, settings.yahooAppPassword])
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return
@@ -771,13 +837,13 @@ export default function JarvisTab() {
           </div>
         )}
 
-        {/* Gmail */}
-        {settings.googleClientId && (
+        {/* Email */}
+        {(settings.googleClientId || settings.microsoftClientId || settings.outlookEmail || settings.yahooEmail) && (
           <div className="card" style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>✉️ Gmail</h4>
+              <h4 style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', letterSpacing: 1.5, textTransform: 'uppercase' }}>✉️ Email</h4>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {gmail.isSignedIn && (
+                {(gmail.isSignedIn || outlook.isSignedIn || settings.outlookEmail || settings.yahooEmail) && (
                   <>
                     <span className="badge badge-blue">{emails.filter(e => e.unread).length} unread</span>
                     <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
@@ -793,22 +859,50 @@ export default function JarvisTab() {
               </div>
             </div>
 
-            {!gmail.isSignedIn ? (
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={gmail.signIn}
-                disabled={gmail.signInStatus === 'signing-in'}
-                style={{ width: '100%', fontSize: 12, justifyContent: 'center' }}
-              >
-                {gmail.signInStatus === 'signing-in' ? '⏳ Signing in…' : '🔑 Connect Gmail'}
-              </button>
-            ) : emailsExpanded && (
+            <div style={{ display: 'grid', gap: 8, marginBottom: emailsExpanded ? 12 : 0 }}>
+              {settings.googleClientId && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={gmail.isSignedIn ? gmail.signOut : gmail.signIn}
+                  disabled={gmail.signInStatus === 'signing-in'}
+                  style={{ width: '100%', fontSize: 12, justifyContent: 'center' }}
+                >
+                  {gmail.signInStatus === 'signing-in' ? '⏳ Signing in to Gmail…' : gmail.isSignedIn ? '🔓 Disconnect Gmail' : '🔑 Connect Gmail'}
+                </button>
+              )}
+
+              {settings.outlookEmail && settings.outlookPassword && (
+                <div style={{ fontSize: 11, color: 'var(--text2)', padding: '8px 10px', background: 'var(--bg3)', borderRadius: 8 }}>
+                  🏢 Outlook IMAP ready: {settings.outlookEmail}
+                </div>
+              )}
+
+              {settings.microsoftClientId && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={outlook.isSignedIn ? outlook.signOut : outlook.signIn}
+                  disabled={outlook.signInStatus === 'signing-in'}
+                  style={{ width: '100%', fontSize: 12, justifyContent: 'center' }}
+                >
+                  {outlook.signInStatus === 'signing-in' ? '⏳ Signing in to Outlook…' : outlook.isSignedIn ? '🔓 Disconnect Outlook' : '🏢 Connect Outlook'}
+                </button>
+              )}
+
+              {settings.yahooEmail && settings.yahooAppPassword && (
+                <div style={{ fontSize: 11, color: 'var(--text2)', padding: '8px 10px', background: 'var(--bg3)', borderRadius: 8 }}>
+                  {yahooStatus === 'loading' ? '⏳ Fetching Yahoo Mail…' : `📨 Yahoo ready: ${settings.yahooEmail}`}
+                </div>
+              )}
+            </div>
+
+            {emailsExpanded && (
               emails.length === 0 && !emailLoading
                 ? <p style={{ fontSize: 11, color: 'var(--text2)' }}>No recent emails.</p>
                 : emails.map(e => (
                   <div key={e.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       {e.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0, display: 'inline-block' }} />}
+                      <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 50, textTransform: 'uppercase' }}>{e.accountType || 'mail'}</span>
                       <span style={{ fontWeight: e.unread ? 600 : 400, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                         {e.subject}
                       </span>

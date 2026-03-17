@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Microsoft Auth</title>
+  </head>
+  <body>
+    <script>
+      (function () {
+        const hash = new URLSearchParams(window.location.hash.slice(1))
+        const error = hash.get('error_description') || hash.get('error')
+        const payload = error
+          ? { source: 'jarvis-microsoft-auth', error }
+          : {
+              source: 'jarvis-microsoft-auth',
+              accessToken: hash.get('access_token'),
+              expiresIn: hash.get('expires_in'),
+            }
+
+        if (window.opener) {
+          window.opener.postMessage(payload, window.location.origin)
+        }
+        window.close()
+      })()
+    </script>
+  </body>
+</html>

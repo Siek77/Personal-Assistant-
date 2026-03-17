@@ -10,6 +10,7 @@ const SECTIONS = [
   { id: 'esp32',      label: '📡 ESP32',      icon: '📡' },
   { id: 'home',       label: '🏠 Home',       icon: '🏠' },
   { id: 'calendar',   label: '📅 Calendar',   icon: '📅' },
+  { id: 'email',      label: '✉️ Email',      icon: '✉️' },
   { id: 'notion',     label: '📝 Notion',     icon: '📝' },
   { id: 'uptime',     label: '🟢 Uptime',     icon: '🟢' },
   { id: 'services',   label: '🔌 Services',   icon: '🔌' },
@@ -391,6 +392,81 @@ export default function SettingsTab() {
                   />
                   <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
                     Credentials are sent to the /api/apple-calendar proxy only when you load calendars — never stored server-side.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Email */}
+            {activeSection === 'email' && (
+              <div className="settings-section">
+                <h3>Email Accounts</h3>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+                  Connect multiple inboxes so JARVIS can summarize personal and work email in one place.
+                </p>
+
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#4285f4' }}>Gmail</h4>
+                  <InputSetting
+                    label="Google OAuth Client ID"
+                    desc="Used for Gmail, Google Calendar, and Google Drive sign-in."
+                    value={settings.googleClientId || ''}
+                    onChange={v => save('googleClientId', v)}
+                    placeholder="1234567890-abc.apps.googleusercontent.com"
+                  />
+                </div>
+
+                <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
+
+                <div style={{ marginBottom: 20 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#2563eb' }}>Corporate Outlook</h4>
+                  <InputSetting
+                    label="Work Email"
+                    desc="Used for direct Outlook IMAP sync when your company account allows it."
+                    value={settings.outlookEmail || ''}
+                    onChange={v => save('outlookEmail', v)}
+                    placeholder="you@company.com"
+                  />
+                  <InputSetting
+                    label="Work Mail Password / App Password"
+                    desc="Use an app password if your company supports it. Some organizations block IMAP entirely."
+                    value={settings.outlookPassword || ''}
+                    onChange={v => save('outlookPassword', v)}
+                    type="password"
+                    placeholder="Password"
+                  />
+                  <InputSetting
+                    label="Microsoft App Client ID"
+                    desc="Optional. Only needed if you later want Microsoft OAuth instead of direct IMAP."
+                    value={settings.microsoftClientId || ''}
+                    onChange={v => save('microsoftClientId', v)}
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  />
+                  <div style={{ marginTop: 10, padding: 10, background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+                    Direct sync uses <code>outlook.office365.com</code> over IMAP. OAuth is optional and only works if you can register an app with redirect URI <code>{window.location.origin}/microsoft-auth-callback.html</code>.
+                  </div>
+                </div>
+
+                <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
+
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#7c3aed' }}>Yahoo Mail</h4>
+                  <InputSetting
+                    label="Yahoo Email Address"
+                    value={settings.yahooEmail || ''}
+                    onChange={v => save('yahooEmail', v)}
+                    placeholder="you@yahoo.com"
+                  />
+                  <InputSetting
+                    label="Yahoo App Password"
+                    desc="Generate this from Yahoo Account Security. Your normal password should not be used."
+                    value={settings.yahooAppPassword || ''}
+                    onChange={v => save('yahooAppPassword', v)}
+                    type="password"
+                    placeholder="App password"
+                  />
+                  <div style={{ marginTop: 10, padding: 10, background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+                    Yahoo messages are fetched server-side over IMAP from <code>imap.mail.yahoo.com</code>.
                   </div>
                 </div>
               </div>
