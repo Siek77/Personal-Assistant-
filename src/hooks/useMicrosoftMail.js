@@ -97,12 +97,18 @@ export function useMicrosoftMail(clientId) {
     return response.json()
   }, [token, signOut])
 
-  const fetchEmails = useCallback(async (maxResults = 10) => {
+  const fetchEmails = useCallback(async ({ maxResults = 50, daysBack = 30, unreadOnly = false } = {}) => {
     const query = new URL('https://graph.microsoft.com/v1.0/me/messages')
-    query.searchParams.set('$top', String(maxResults))
+    query.searchParams.set('$top', String(Math.min(maxResults, 50)))
     query.searchParams.set('$select', 'id,subject,from,receivedDateTime,bodyPreview,isRead')
     query.searchParams.set('$orderby', 'receivedDateTime DESC')
-    query.searchParams.set('$filter', 'isRead eq false')
+    const filters = []
+    if (unreadOnly) filters.push('isRead eq false')
+    if (daysBack) {
+      const since = new Date(Date.now() - daysBack * 86400000).toISOString()
+      filters.push(`receivedDateTime ge ${since}`)
+    }
+    if (filters.length) query.searchParams.set('$filter', filters.join(' and '))
 
     const data = await apiFetch(query.toString())
     return (data.value || []).map(msg => ({

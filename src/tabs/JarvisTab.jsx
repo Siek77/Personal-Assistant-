@@ -22,6 +22,11 @@ const OPENAI_PROVIDER = {
 
 const BLOB_ARCHIVE_THRESHOLD = 0.8
 const BLOB_ARCHIVE_TARGET = 0.6
+const EMAIL_RANGES = [
+  { id: '7d', label: '7d', daysBack: 7 },
+  { id: '30d', label: '30d', daysBack: 30 },
+  { id: '90d', label: '90d', daysBack: 90 },
+]
 
 function stripMarkdown(text) {
   return text
@@ -55,6 +60,36 @@ function buildChatContext() {
     haSnapshot: readJson('jarvis_ha_snapshot', null),
     stocksCache: readJson('jarvis_stocks_cache', []),
   }
+}
+
+function matchesEmailQuery(email, query) {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return [email.subject, email.from, email.snippet]
+    .filter(Boolean)
+    .some(value => value.toLowerCase().includes(q))
+}
+
+function emailScopeLabel(email) {
+  return email.accountScope || (email.accountType === 'gmail' || email.accountType === 'yahoo' ? 'personal' : 'work')
+}
+
+function buildEmailSearchPrompt(query, matches, rangeLabel) {
+  const personal = matches.filter(email => emailScopeLabel(email) === 'personal')
+  const work = matches.filter(email => emailScopeLabel(email) === 'work')
+  const formatLine = (email) => `- [${email.accountType || 'mail'}] ${email.subject} — ${email.from}${email.date ? ` (${new Date(email.date).toLocaleDateString()})` : ''}`
+
+  let prompt = `Search my email for "${query}" and summarize what matters. Distinguish clearly between personal and work accounts.\n\n`
+  prompt += `Search window: last ${rangeLabel}.\n`
+
+  if (personal.length) {
+    prompt += `\nPersonal email matches:\n${personal.map(formatLine).join('\n')}\n`
+  }
+  if (work.length) {
+    prompt += `\nWork email matches:\n${work.map(formatLine).join('\n')}\n`
+  }
+
+  return prompt.trim()
 }
 
 // ── Component ──────────────────────────────────────────────────
@@ -102,6 +137,10 @@ export default function JarvisTab() {
   const [emailsExpanded, setEmailsExpanded] = useState(false)
   const [emailLoading, setEmailLoading] = useState(false)
   const [yahooStatus, setYahooStatus] = useState('idle')
+  const [emailRange, setEmailRange] = useState('30d')
+  const [emailSearchQuery, setEmailSearchQuery] = useState('')
+  const [emailSearchLoading, setEmailSearchLoading] = useState(false)
+  const [emailSearchStatus, setEmailSearchStatus] = useState('')
   const [ttsEnabled, setTtsEnabled] = useState(settings.ttsEnabled || false)
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef(null)
@@ -321,82 +360,91 @@ export default function JarvisTab() {
           .join('\n')
       } catch { return '' }
     })()
-    const emailLines = emails.slice(0, 3).map(e => `- ${e.unread ? '[UNREAD] ' : ''}${e.subject} from ${e.from}`).join('\n')
+    const emailLines = emails.slice(0, 8).map(e => `- ${e.unread ? '[UNREAD] ' : ''}${e.subject} from ${e.from}`).join('\n')
     let prompt = `Give me my morning briefing for ${todayStr}. Be concise and conversational.`
     if (calEvents) prompt += `\n\nToday's events:\n${calEvents}`
     if (emailLines) prompt += `\n\nRecent emails:\n${emailLines}`
     setInput(prompt)
   }
 
-  // ── Gmail fetch ──
-  const loadEmails = useCallback(async () => {
-    setEmailLoading(true)
-    try {
-      const providers = []
+  const fetchEmailProviders = useCallback(async ({ maxResults = 50, daysBack = 30 } = {}) => {
+    const fetchOptions = { maxResults, daysBack, unreadOnly: false }
+    const providers = []
 
       if (gmail.isSignedIn) {
         providers.push(
-          gmail.fetchEmails(10).then(items => items.map(item => ({ ...item, accountType: 'gmail' })))
+          gmail.fetchEmails(fetchOptions).then(items => items.map(item => ({ ...item, accountType: 'gmail', accountScope: 'personal' })))
         )
       }
 
       if (outlook.isSignedIn) {
         providers.push(
-          outlook.fetchEmails(10).then(items => items.map(item => ({ ...item, accountType: 'outlook' })))
+          outlook.fetchEmails(fetchOptions).then(items => items.map(item => ({ ...item, accountType: 'outlook', accountScope: 'work' })))
         )
       }
 
-      if (settings.outlookEmail && settings.outlookPassword) {
-        providers.push(
-          fetch('/api/email-imap', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              host: 'outlook.office365.com',
-              port: 993,
-              secure: true,
-              username: settings.outlookEmail,
-              password: settings.outlookPassword,
-              maxResults: 10,
-            }),
-          })
+    if (settings.outlookEmail && settings.outlookPassword) {
+      providers.push(
+        fetch('/api/email-imap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            host: 'outlook.office365.com',
+            port: 993,
+            secure: true,
+            username: settings.outlookEmail,
+            password: settings.outlookPassword,
+            maxResults,
+            daysBack,
+            unreadOnly: false,
+          }),
+        })
             .then(async res => {
               const data = await res.json()
               if (!res.ok) throw new Error(data.error || 'Outlook IMAP fetch failed')
-              return (data.emails || []).map(item => ({ ...item, accountType: 'outlook-work' }))
+              return (data.emails || []).map(item => ({ ...item, accountType: 'outlook-work', accountScope: 'work' }))
             })
         )
       }
 
-      if (settings.yahooEmail && settings.yahooAppPassword) {
-        setYahooStatus('loading')
-        providers.push(
-          fetch('/api/email-imap', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              host: 'imap.mail.yahoo.com',
-              port: 993,
-              secure: true,
-              username: settings.yahooEmail,
-              password: settings.yahooAppPassword,
-              maxResults: 10,
-            }),
-          })
+    if (settings.yahooEmail && settings.yahooAppPassword) {
+      setYahooStatus('loading')
+      providers.push(
+        fetch('/api/email-imap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            host: 'imap.mail.yahoo.com',
+            port: 993,
+            secure: true,
+            username: settings.yahooEmail,
+            password: settings.yahooAppPassword,
+            maxResults,
+            daysBack,
+            unreadOnly: false,
+          }),
+        })
             .then(async res => {
               const data = await res.json()
               if (!res.ok) throw new Error(data.error || 'Yahoo fetch failed')
-              return (data.emails || []).map(item => ({ ...item, accountType: 'yahoo' }))
+              return (data.emails || []).map(item => ({ ...item, accountType: 'yahoo', accountScope: 'personal' }))
             })
             .finally(() => setYahooStatus('idle'))
         )
-      }
+    }
 
-      const fetched = (await Promise.allSettled(providers))
-        .filter(result => result.status === 'fulfilled')
-        .flatMap(result => result.value)
-        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+    return (await Promise.allSettled(providers))
+      .filter(result => result.status === 'fulfilled')
+      .flatMap(result => result.value)
+      .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+  }, [gmail.isSignedIn, gmail.fetchEmails, outlook.isSignedIn, outlook.fetchEmails, settings.outlookEmail, settings.outlookPassword, settings.yahooEmail, settings.yahooAppPassword])
 
+  // ── Email fetch ──
+  const loadEmails = useCallback(async () => {
+    setEmailLoading(true)
+    try {
+      const selectedRange = EMAIL_RANGES.find(range => range.id === emailRange) || EMAIL_RANGES[1]
+      const fetched = await fetchEmailProviders({ maxResults: 50, daysBack: selectedRange.daysBack })
       setEmails(fetched)
       localStorage.setItem('jarvis_email_summary', JSON.stringify(fetched))
       window.dispatchEvent(new CustomEvent('jarvis:email-updated'))
@@ -405,7 +453,35 @@ export default function JarvisTab() {
     } finally {
       setEmailLoading(false)
     }
-  }, [gmail.isSignedIn, gmail.fetchEmails, outlook.isSignedIn, outlook.fetchEmails, settings.outlookEmail, settings.outlookPassword, settings.yahooEmail, settings.yahooAppPassword])
+  }, [emailRange, fetchEmailProviders])
+
+  const searchEmailsAndPrompt = useCallback(async () => {
+    const query = emailSearchQuery.trim()
+    if (!query) return
+
+    setEmailSearchLoading(true)
+    setEmailSearchStatus('')
+    try {
+      const selectedRange = EMAIL_RANGES.find(range => range.id === emailRange) || EMAIL_RANGES[1]
+      const fetched = await fetchEmailProviders({ maxResults: 50, daysBack: selectedRange.daysBack })
+      const matches = fetched.filter(email => matchesEmailQuery(email, query)).slice(0, 15)
+
+      if (!matches.length) {
+        setEmailSearchStatus(`No matches found for "${query}" in the last ${selectedRange.label}.`)
+        return
+      }
+
+      setInput(buildEmailSearchPrompt(query, matches, selectedRange.label))
+      setEmails(matches)
+      localStorage.setItem('jarvis_email_summary', JSON.stringify(matches))
+      window.dispatchEvent(new CustomEvent('jarvis:email-updated'))
+      setEmailSearchStatus(`Loaded ${matches.length} matching email${matches.length === 1 ? '' : 's'} into the prompt.`)
+    } catch (e) {
+      setEmailSearchStatus(`Email search failed: ${e.message}`)
+    } finally {
+      setEmailSearchLoading(false)
+    }
+  }, [emailRange, emailSearchQuery, fetchEmailProviders])
 
   // Auto-load emails on sign-in
   useEffect(() => {
@@ -846,6 +922,17 @@ export default function JarvisTab() {
                 {(gmail.isSignedIn || outlook.isSignedIn || settings.outlookEmail || settings.yahooEmail) && (
                   <>
                     <span className="badge badge-blue">{emails.filter(e => e.unread).length} unread</span>
+                    <select
+                      className="input"
+                      value={emailRange}
+                      onChange={e => setEmailRange(e.target.value)}
+                      style={{ width: 'auto', fontSize: 10, padding: '2px 6px', height: 24 }}
+                      title="How far back to sync"
+                    >
+                      {EMAIL_RANGES.map(range => (
+                        <option key={range.id} value={range.id}>{range.label}</option>
+                      ))}
+                    </select>
                     <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 6px' }}
                       onClick={loadEmails} disabled={emailLoading} title="Refresh">
                       {emailLoading ? '⏳' : '↻'}
@@ -858,6 +945,36 @@ export default function JarvisTab() {
                 )}
               </div>
             </div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input
+                className="input"
+                value={emailSearchQuery}
+                onChange={e => setEmailSearchQuery(e.target.value)}
+                placeholder="Search emails by sender, subject, keyword..."
+                style={{ fontSize: 12, flex: 1 }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    searchEmailsAndPrompt()
+                  }
+                }}
+              />
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={searchEmailsAndPrompt}
+                disabled={emailSearchLoading || !emailSearchQuery.trim()}
+                style={{ fontSize: 12 }}
+                title="Search and add results to a JARVIS prompt"
+              >
+                {emailSearchLoading ? '⏳' : 'Ask'}
+              </button>
+            </div>
+            {emailSearchStatus && (
+              <div style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 10 }}>
+                {emailSearchStatus}
+              </div>
+            )}
 
             <div style={{ display: 'grid', gap: 8, marginBottom: emailsExpanded ? 12 : 0 }}>
               {settings.googleClientId && (
@@ -902,7 +1019,7 @@ export default function JarvisTab() {
                   <div key={e.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       {e.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0, display: 'inline-block' }} />}
-                      <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 50, textTransform: 'uppercase' }}>{e.accountType || 'mail'}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text2)', minWidth: 86, textTransform: 'uppercase' }}>{emailScopeLabel(e)} · {e.accountType || 'mail'}</span>
                       <span style={{ fontWeight: e.unread ? 600 : 400, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                         {e.subject}
                       </span>
@@ -918,6 +1035,9 @@ export default function JarvisTab() {
                   </div>
                 ))
             )}
+            <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 8 }}>
+              Syncs up to 50 emails per account for the selected window. Pick a longer range and refresh if you want JARVIS to dig further back.
+            </div>
           </div>
         )}
 

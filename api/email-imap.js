@@ -26,7 +26,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { host, port = 993, secure = true, username, password, maxResults = 10 } = req.body || {}
+  const { host, port = 993, secure = true, username, password, maxResults = 50, daysBack = 30, unreadOnly = false } = req.body || {}
   if (!host || !username || !password) {
     return res.status(400).json({ error: 'host, username, and password are required' })
   }
@@ -46,8 +46,12 @@ export default async function handler(req, res) {
     await client.connect()
     await client.mailboxOpen('INBOX')
 
-    const unseen = await client.search({ seen: false })
-    const ids = unseen.slice(-maxResults).reverse()
+    const searchQuery = {}
+    if (unreadOnly) searchQuery.seen = false
+    if (daysBack) searchQuery.since = new Date(Date.now() - daysBack * 86400000)
+
+    const matches = await client.search(searchQuery)
+    const ids = matches.slice(-Math.min(maxResults, 50)).reverse()
     if (!ids.length) {
       return res.status(200).json({ emails: [] })
     }

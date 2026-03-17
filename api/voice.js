@@ -224,7 +224,7 @@ export default async function handler(req, res) {
   let emailSummary = ''
   const emails = synced?.emailSummary || []
   if (emails.length) {
-    const lines = emails.slice(0, 5).map(e =>
+    const lines = emails.slice(0, 10).map(e =>
       `- ${e.unread ? '[UNREAD] ' : ''}${e.subject} — from ${e.from}`
     )
     if (lines.length) emailSummary = `\nRecent emails:\n${lines.join('\n')}`

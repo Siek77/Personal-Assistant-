@@ -31,7 +31,7 @@ function buildSystemPrompt(settings = {}, memory = {}, context = {}) {
   const routines = (memory.routines || []).map(routine => `- ${routine.description || routine.text || 'Unnamed routine'}`).join('\n') || '(none noted yet)'
   const topics = (memory.recentTopics || []).join(', ') || 'none yet'
   const emailSummary = (context.emailSummary || [])
-    .slice(0, 5)
+    .slice(0, 20)
     .map(email => `- ${email.unread ? '[UNREAD] ' : ''}${email.subject} — from ${email.from}`)
     .join('\n')
   const calendarSummary = formatUpcomingEvents(context.calendarEvents || [])
@@ -65,7 +65,7 @@ ${routines}
 
 Recent interests: ${topics}
 ${calendarSummary ? `\nUpcoming calendar events:\n${calendarSummary}` : ''}
-${emailSummary ? `\nRecent emails:\n${emailSummary}` : ''}
+${emailSummary ? `\nRecent synced emails:\n${emailSummary}` : ''}
 ${liveContext.length ? `\nLive context:\n- ${liveContext.join('\n- ')}` : ''}
 
 Guidelines:
