@@ -8,7 +8,7 @@
 // DELETE ?key=...        body:{ids:[...]}             → { ok, deleted }
 
 import { put, list, del } from '@vercel/blob'
-import { fetchBlobJson } from './blob-utils'
+import { fetchBlobJson } from './blob-utils.js'
 
 const LIMIT_BYTES = 500 * 1024 * 1024 // 500 MB soft cap
 const KEY_PATTERN = /^[a-zA-Z0-9_-]{8,120}$/
