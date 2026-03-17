@@ -20,31 +20,37 @@ export default async function handler(req, res) {
 
   const blobPath = `jarvis-state/${clientId}.json`
 
-  if (req.method === 'GET') {
-    const { blobs } = await list({ prefix: blobPath })
-    if (!blobs.length) return res.status(200).json({ data: null })
-    const data = await fetchBlobJson(blobs[0].url)
-    return res.status(200).json({ data })
-  }
-
-  if (req.method === 'POST') {
-    const body = req.body || {}
-    if (JSON.stringify(body).length > MAX_PAYLOAD_BYTES) {
-      return res.status(413).json({ error: 'Payload too large' })
+  try {
+    if (req.method === 'GET') {
+      const { blobs } = await list({ prefix: blobPath })
+      if (!blobs.length) return res.status(200).json({ data: null })
+      const data = await fetchBlobJson(blobs[0].url)
+      return res.status(200).json({ data })
     }
 
-    const { blobs: existing } = await list({ prefix: blobPath })
-    if (existing.length) await del(existing.map(blob => blob.url))
+    if (req.method === 'POST') {
+      const body = req.body || {}
+      if (JSON.stringify(body).length > MAX_PAYLOAD_BYTES) {
+        return res.status(413).json({ error: 'Payload too large' })
+      }
 
-    const savedAt = new Date().toISOString()
-    await put(blobPath, JSON.stringify({ ...body, savedAt }), {
-      access: 'private',
-      contentType: 'application/json',
-      addRandomSuffix: false,
+      const { blobs: existing } = await list({ prefix: blobPath })
+      if (existing.length) await del(existing.map(blob => blob.url))
+
+      const savedAt = new Date().toISOString()
+      await put(blobPath, JSON.stringify({ ...body, savedAt }), {
+        access: 'private',
+        contentType: 'application/json',
+        addRandomSuffix: false,
+      })
+
+      return res.status(200).json({ ok: true, savedAt })
+    }
+
+    return res.status(405).json({ error: 'Method not allowed' })
+  } catch (error) {
+    return res.status(500).json({
+      error: error?.message || 'State persistence failed',
     })
-
-    return res.status(200).json({ ok: true, savedAt })
   }
-
-  return res.status(405).json({ error: 'Method not allowed' })
 }
