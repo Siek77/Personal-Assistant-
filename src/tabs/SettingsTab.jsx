@@ -206,7 +206,9 @@ export default function SettingsTab() {
 
   const loadCloudState = async (clientId) => {
     const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
-    const data = await res.json()
+    const text = await res.text()
+    const data = text ? JSON.parse(text) : {}
+    if (!res.ok) throw new Error(data?.error || `State load failed (${res.status})`)
     return data?.data || null
   }
 
@@ -216,33 +218,45 @@ export default function SettingsTab() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildPersistencePayload(settings, memory)),
     })
-    return res.json()
+    const text = await res.text()
+    const data = text ? JSON.parse(text) : {}
+    if (!res.ok) throw new Error(data?.error || `State save failed (${res.status})`)
+    return data
   }
 
   const copyConversations = async (fromKey, toKey) => {
     if (!fromKey || !toKey || fromKey === toKey) return 0
 
     const listRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}`)
-    const listData = await listRes.json()
+    const listText = await listRes.text()
+    const listData = listText ? JSON.parse(listText) : {}
+    if (!listRes.ok) throw new Error(listData?.error || `Conversation list failed (${listRes.status})`)
     const conversations = listData?.conversations || []
     let copied = 0
 
     for (const meta of conversations) {
-      const convRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}&id=${encodeURIComponent(meta.id)}`)
-      const convData = await convRes.json()
-      const conversation = convData?.conversation
-      if (!conversation?.messages) continue
+      try {
+        const convRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}&id=${encodeURIComponent(meta.id)}`)
+        const convText = await convRes.text()
+        const convData = convText ? JSON.parse(convText) : {}
+        if (!convRes.ok) continue
+        const conversation = convData?.conversation
+        if (!conversation?.messages) continue
 
-      await fetch(`/api/conversations?key=${encodeURIComponent(toKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: conversation.id || meta.id,
-          messages: conversation.messages,
-          savedAt: conversation.savedAt || meta.uploadedAt || new Date().toISOString(),
-        }),
-      })
-      copied += 1
+        const saveRes = await fetch(`/api/conversations?key=${encodeURIComponent(toKey)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: conversation.id || meta.id,
+            messages: conversation.messages,
+            savedAt: conversation.savedAt || meta.uploadedAt || new Date().toISOString(),
+          }),
+        })
+        if (!saveRes.ok) continue
+        copied += 1
+      } catch {
+        // Skip any single conversation that fails so shared settings sync can still succeed.
+      }
     }
 
     return copied
@@ -311,8 +325,8 @@ export default function SettingsTab() {
         setLastSynced(savedAt)
         setSyncStatus(`✓ Shared sync code applied. Uploaded this device's settings and memory${copied ? ` and copied ${copied} conversations` : ''}.`)
       }
-    } catch {
-      setSyncStatus('✗ Sync code applied, but cloud sync failed.')
+    } catch (error) {
+      setSyncStatus(`✗ Sync code applied, but cloud sync failed: ${error.message || 'Unknown error'}`)
     } finally {
       setSyncing(false)
       setTimeout(() => setSyncStatus(''), 5000)
@@ -334,8 +348,8 @@ export default function SettingsTab() {
       localStorage.setItem('jarvis_last_synced', savedAt)
       setLastSynced(savedAt)
       setSyncStatus(`✓ New sync code created and uploaded. ${copied ? `Copied ${copied} conversations too.` : 'Current settings and memory are now shared.'}`)
-    } catch {
-      setSyncStatus('✗ Sync code created, but initial cloud upload failed.')
+    } catch (error) {
+      setSyncStatus(`✗ Sync code created, but initial cloud upload failed: ${error.message || 'Unknown error'}`)
     } finally {
       setSyncing(false)
       setTimeout(() => setSyncStatus(''), 5000)
