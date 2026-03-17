@@ -159,10 +159,28 @@ export default function JarvisTab() {
     } catch { /* ignore */ }
   }, [messages])
 
-  // Load prior context — blob-primary, Drive as fallback
+  // Load prior context — Drive-primary, Blob as fallback
   useEffect(() => {
     ;(async () => {
-      // ── Blob conversations (primary) ──
+      // ── Google Drive conversations (primary) ──
+      if (drive.isSignedIn) {
+        try {
+          setDriveStatus('Loading history…')
+          const convs = await drive.loadRecentConversations(3)
+          const prior = convs
+            .flatMap(c => (c.messages || []).filter(m => m.id !== 'welcome').slice(-6))
+            .slice(-12)
+          priorMessagesRef.current = prior.map(m => ({ role: m.role, content: m.content }))
+          setDriveStatus(convs.length ? `${convs.length} session${convs.length > 1 ? 's' : ''} loaded` : 'No history yet')
+          setTimeout(() => setDriveStatus(''), 3000)
+        } catch {
+          setDriveStatus('History load failed')
+          setTimeout(() => setDriveStatus(''), 3000)
+        }
+        return
+      }
+
+      // ── Blob fallback when Drive is unavailable ──
       if (conversations.isAvailable) {
         try {
           setSaveStatus('Loading history…')
@@ -173,29 +191,9 @@ export default function JarvisTab() {
           priorMessagesRef.current = prior.map(m => ({ role: m.role, content: m.content }))
           setSaveStatus(convs.length ? `${convs.length} session${convs.length > 1 ? 's' : ''} loaded` : '')
           setTimeout(() => setSaveStatus(''), 3000)
-          // Also populate the blob convs list
           conversations.listConversations().then(setBlobConvs).catch(() => {})
         } catch {
           setSaveStatus('')
-        }
-        return // don't also load from Drive when blob is available
-      }
-
-      // ── Drive fallback when blob history is unavailable ──
-      if (drive.isSignedIn) {
-        try {
-          setDriveStatus('Loading history…')
-          const convs = await drive.loadRecentConversations(3)
-          const prior = convs
-            .reverse()
-            .flatMap(c => (c.messages || []).filter(m => m.id !== 'welcome').slice(-6))
-            .slice(-10)
-          priorMessagesRef.current = prior.map(m => ({ role: m.role, content: m.content }))
-          setDriveStatus(convs.length ? `${convs.length} session${convs.length > 1 ? 's' : ''} loaded` : 'No history yet')
-          setTimeout(() => setDriveStatus(''), 3000)
-        } catch {
-          setDriveStatus('History load failed')
-          setTimeout(() => setDriveStatus(''), 3000)
         }
       }
     })()
@@ -207,18 +205,18 @@ export default function JarvisTab() {
     drive.listAllConversations().then(setDriveConvs).catch(() => {})
   }, [drive.isSignedIn])
 
-  // Save after every AI reply — blob-primary, Drive as fallback
+  // Save after every AI reply — Drive-primary, Blob as fallback
   const scheduleSave = useCallback((msgs) => {
-    if (conversations.isAvailable) {
+    if (drive.isSignedIn) {
+      drive.saveConversation(convIdRef.current, msgs)
+        .then(() => { setDriveStatus('✓ Saved'); setTimeout(() => setDriveStatus(''), 2500) })
+        .catch(e => { setDriveStatus('⚠️ ' + (e.message || 'Save failed')); setTimeout(() => setDriveStatus(''), 6000) })
+    } else if (conversations.isAvailable) {
       setSaving(true)
       conversations.saveConversation(convIdRef.current, msgs)
         .then(() => { setSaveStatus('✓ Saved'); setTimeout(() => setSaveStatus(''), 2500) })
         .catch(e => { setSaveStatus('⚠️ ' + (e.message || 'Save failed')); setTimeout(() => setSaveStatus(''), 6000) })
         .finally(() => setSaving(false))
-    } else if (drive.isSignedIn) {
-      drive.saveConversation(convIdRef.current, msgs)
-        .then(() => { setDriveStatus('✓ Saved'); setTimeout(() => setDriveStatus(''), 2500) })
-        .catch(e => { setDriveStatus('⚠️ ' + (e.message || 'Save failed')); setTimeout(() => setDriveStatus(''), 6000) })
     }
   }, [conversations.isAvailable, conversations.saveConversation, drive.isSignedIn, drive.saveConversation])
 

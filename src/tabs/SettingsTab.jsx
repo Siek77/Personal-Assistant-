@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
+import { useGoogleDrive } from '../hooks/useGoogleDrive'
 import {
   applyPersistedPayload,
   buildPersistencePayload,
@@ -189,6 +190,7 @@ function CalendarFeedsEditor({ value, onChange }) {
 export default function SettingsTab() {
   const { settings, updateSetting, updateSettings } = useSettings()
   const { memory, clearMemory, mergeRemoteMemory } = useMemory()
+  const drive = useGoogleDrive(settings.googleClientId || null)
   const [activeSection, setActiveSection] = useState('profile')
   const [saved, setSaved] = useState(false)
   const [syncStatus, setSyncStatus] = useState('')
@@ -197,6 +199,7 @@ export default function SettingsTab() {
   const [storageKey, setStorageKey] = useState(() => getPersistenceKey())
   const [lastSynced, setLastSynced] = useState(() => localStorage.getItem('jarvis_last_synced') || '')
   const [syncing, setSyncing] = useState(false)
+  const [manualSyncText, setManualSyncText] = useState('')
 
   const save = (key, val) => {
     updateSetting(key, val)
@@ -204,72 +207,33 @@ export default function SettingsTab() {
     setTimeout(() => setSaved(false), 1500)
   }
 
-  const parseApiResponse = async (res, fallbackLabel) => {
-    const text = await res.text()
-    let data = null
-
-    try {
-      data = text ? JSON.parse(text) : {}
-    } catch {
-      if (!res.ok) throw new Error(text || `${fallbackLabel} failed (${res.status})`)
-      throw new Error(text || `${fallbackLabel} returned an invalid response`)
-    }
-
-    if (!res.ok) {
-      throw new Error(data?.error || `${fallbackLabel} failed (${res.status})`)
-    }
-
-    return data
+  const encodeManualPackage = (payload) => {
+    const json = JSON.stringify(payload)
+    return btoa(unescape(encodeURIComponent(json)))
   }
 
+  const decodeManualPackage = (value) => {
+    const normalized = String(value || '').trim()
+    if (!normalized) throw new Error('Paste a sync package first.')
+    const json = decodeURIComponent(escape(atob(normalized)))
+    return JSON.parse(json)
+  }
+
+  const buildSyncPayload = () => ({
+    ...buildPersistencePayload(settings, memory),
+    storageKey: getPersistenceKey(),
+    exportedAt: new Date().toISOString(),
+    version: 1,
+  })
+
   const loadCloudState = async (clientId) => {
-    const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
-    const data = await parseApiResponse(res, 'State load')
-    return data?.data || null
+    if (!drive.isSignedIn) throw new Error('Sign in to Google Drive first.')
+    return drive.loadAssistantState(clientId)
   }
 
   const saveCloudState = async (clientId) => {
-    const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildPersistencePayload(settings, memory)),
-    })
-    return parseApiResponse(res, 'State save')
-  }
-
-  const copyConversations = async (fromKey, toKey) => {
-    if (!fromKey || !toKey || fromKey === toKey) return 0
-
-    const listRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}`)
-    const listData = await parseApiResponse(listRes, 'Conversation list')
-    const conversations = listData?.conversations || []
-    let copied = 0
-
-    for (const meta of conversations) {
-      try {
-        const convRes = await fetch(`/api/conversations?key=${encodeURIComponent(fromKey)}&id=${encodeURIComponent(meta.id)}`)
-        const convData = await parseApiResponse(convRes, 'Conversation fetch')
-        if (!convRes.ok) continue
-        const conversation = convData?.conversation
-        if (!conversation?.messages) continue
-
-        const saveRes = await fetch(`/api/conversations?key=${encodeURIComponent(toKey)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: conversation.id || meta.id,
-            messages: conversation.messages,
-            savedAt: conversation.savedAt || meta.uploadedAt || new Date().toISOString(),
-          }),
-        })
-        await parseApiResponse(saveRes, 'Conversation save')
-        copied += 1
-      } catch {
-        // Skip any single conversation that fails so shared settings sync can still succeed.
-      }
-    }
-
-    return copied
+    if (!drive.isSignedIn) throw new Error('Sign in to Google Drive first.')
+    return drive.saveAssistantState(clientId, buildSyncPayload())
   }
 
   const pushSync = async () => {
@@ -279,9 +243,9 @@ export default function SettingsTab() {
       const { savedAt } = await saveCloudState(clientId)
       localStorage.setItem('jarvis_last_synced', savedAt)
       setLastSynced(savedAt)
-      setSyncStatus('✓ Synced to cloud!')
-    } catch {
-      setSyncStatus('✗ Sync failed — check your connection.')
+      setSyncStatus('✓ Synced to Google Drive!')
+    } catch (error) {
+      setSyncStatus(`✗ Sync failed: ${error.message || 'Unknown error'}`)
     } finally {
       setSyncing(false)
       setTimeout(() => setSyncStatus(''), 4000)
@@ -298,9 +262,9 @@ export default function SettingsTab() {
       const ts = data.savedAt || new Date().toISOString()
       localStorage.setItem('jarvis_last_synced', ts)
       setLastSynced(ts)
-      setSyncStatus('✓ Cloud state pulled successfully.')
-    } catch {
-      setSyncStatus('✗ Pull failed — check your connection.')
+      setSyncStatus('✓ Google Drive state loaded successfully.')
+    } catch (error) {
+      setSyncStatus(`✗ Pull failed: ${error.message || 'Unknown error'}`)
     } finally {
       setSyncing(false)
       setTimeout(() => setSyncStatus(''), 5000)
@@ -308,7 +272,6 @@ export default function SettingsTab() {
   }
 
   const applySyncCode = async () => {
-    const previousKey = getPersistenceKey()
     const normalized = setSyncCode(syncCodeInput)
     setSyncCodeInput(normalized)
     const nextKey = getPersistenceKey()
@@ -327,16 +290,15 @@ export default function SettingsTab() {
         const ts = cloudData.savedAt || new Date().toISOString()
         localStorage.setItem('jarvis_last_synced', ts)
         setLastSynced(ts)
-        setSyncStatus('✓ Shared sync code applied. Pulled settings and memory from the cloud assistant.')
+        setSyncStatus('✓ Shared sync code applied. Pulled settings and memory from Google Drive.')
       } else {
         const { savedAt } = await saveCloudState(nextKey)
-        const copied = await copyConversations(previousKey, nextKey)
         localStorage.setItem('jarvis_last_synced', savedAt)
         setLastSynced(savedAt)
-        setSyncStatus(`✓ Shared sync code applied. Uploaded this device's settings and memory${copied ? ` and copied ${copied} conversations` : ''}.`)
+        setSyncStatus('✓ Shared sync code applied. Uploaded this device settings and memory to Google Drive.')
       }
     } catch (error) {
-      setSyncStatus(`✗ Sync code applied, but cloud sync failed: ${error.message || 'Unknown error'}`)
+      setSyncStatus(`✗ Sync code applied, but Drive sync failed: ${error.message || 'Unknown error'}`)
     } finally {
       setSyncing(false)
       setTimeout(() => setSyncStatus(''), 5000)
@@ -344,22 +306,20 @@ export default function SettingsTab() {
   }
 
   const generateAndApplySyncCode = async () => {
-    const previousKey = getPersistenceKey()
     const nextCode = generateSyncCode()
     setSyncCodeInput(nextCode)
-    const normalized = setSyncCode(nextCode)
+    setSyncCode(nextCode)
     const nextKey = getPersistenceKey()
     setStorageKey(nextKey)
 
     setSyncing(true)
     try {
       const { savedAt } = await saveCloudState(nextKey)
-      const copied = await copyConversations(previousKey, nextKey)
       localStorage.setItem('jarvis_last_synced', savedAt)
       setLastSynced(savedAt)
-      setSyncStatus(`✓ New sync code created and uploaded. ${copied ? `Copied ${copied} conversations too.` : 'Current settings and memory are now shared.'}`)
+      setSyncStatus('✓ New sync code created and uploaded to Google Drive. Current settings and memory are now shared.')
     } catch (error) {
-      setSyncStatus(`✗ Sync code created, but initial cloud upload failed: ${error.message || 'Unknown error'}`)
+      setSyncStatus(`✗ Sync code created, but initial Drive upload failed: ${error.message || 'Unknown error'}`)
     } finally {
       setSyncing(false)
       setTimeout(() => setSyncStatus(''), 5000)
@@ -377,6 +337,32 @@ export default function SettingsTab() {
       setSyncStatus('✓ Sync code copied. Paste it into your other device.')
     } catch {
       setSyncStatus(`Copy this sync code manually: ${value}`)
+    }
+    setTimeout(() => setSyncStatus(''), 5000)
+  }
+
+  const exportManualSync = async () => {
+    try {
+      const bundle = encodeManualPackage(buildSyncPayload())
+      setManualSyncText(bundle)
+      await navigator.clipboard.writeText(bundle)
+      setSyncStatus('✓ Assistant sync package copied. Paste it into another device to import settings and memory.')
+    } catch (error) {
+      setSyncStatus(`✗ Export failed: ${error.message || 'Unknown error'}`)
+    }
+    setTimeout(() => setSyncStatus(''), 5000)
+  }
+
+  const importManualSync = async () => {
+    try {
+      const data = decodeManualPackage(manualSyncText)
+      applyPersistedPayload(data, { updateSettings, mergeRemoteMemory })
+      const ts = data.savedAt || data.exportedAt || new Date().toISOString()
+      localStorage.setItem('jarvis_last_synced', ts)
+      setLastSynced(ts)
+      setSyncStatus('✓ Assistant package imported. Settings and memory are now loaded on this device.')
+    } catch (error) {
+      setSyncStatus(`✗ Import failed: ${error.message || 'Unknown error'}`)
     }
     setTimeout(() => setSyncStatus(''), 5000)
   }
@@ -936,15 +922,29 @@ export default function SettingsTab() {
             {/* Sync */}
             {activeSection === 'sync' && (
               <div className="settings-section">
-                <h3>Cloud Sync</h3>
+                <h3>Drive Sync</h3>
                 <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-                  Settings, memory, calendar/email context, and conversation history are saved to Vercel Blob. Use a shared sync code if you want multiple devices to open the exact same assistant.
+                  Google Drive is now the main sync/archive path. Shared settings and memory save into your Drive app folder, and conversations prefer Drive before any Blob fallback.
                 </p>
+
+                <div style={{ marginBottom: 18, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                  <div><strong style={{ color: 'var(--text3)' }}>Google Drive status:</strong> {drive.isSignedIn ? 'Connected' : 'Not connected'}</div>
+                  <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn btn-primary btn-sm" onClick={() => drive.signIn()} disabled={!settings.googleClientId || drive.signInStatus === 'signing-in' || drive.isSignedIn}>
+                      {drive.isSignedIn ? 'Drive Connected' : (drive.signInStatus === 'signing-in' ? 'Connecting…' : 'Connect Drive')}
+                    </button>
+                    {drive.isSignedIn && (
+                      <button className="btn btn-ghost btn-sm" onClick={() => drive.signOut()}>
+                        Disconnect
+                      </button>
+                    )}
+                  </div>
+                </div>
 
                 <div style={{ marginBottom: 20 }}>
                   <div className="settings-label" style={{ marginBottom: 6 }}>Shared Sync Code</div>
                   <div className="settings-desc" style={{ marginBottom: 10 }}>
-                    Generate one here or paste the same code on another device. Devices using the same code will share the same memory, settings, and conversations.
+                    Generate one here or paste the same code on another device. Devices using the same code will point at the same Drive-backed assistant state.
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <input
@@ -955,10 +955,10 @@ export default function SettingsTab() {
                       placeholder="jarvis-your-shared-code"
                       style={{ fontSize: 13, flex: '1 1 260px' }}
                     />
-                    <button className="btn btn-primary btn-sm" onClick={() => applySyncCode()} disabled={syncing}>
+                    <button className="btn btn-primary btn-sm" onClick={() => applySyncCode()} disabled={syncing || !drive.isSignedIn}>
                       Use Code
                     </button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => generateAndApplySyncCode()} disabled={syncing}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => generateAndApplySyncCode()} disabled={syncing || !drive.isSignedIn}>
                       Generate
                     </button>
                     <button className="btn btn-ghost btn-sm" onClick={() => copySyncCode()}>
@@ -976,19 +976,42 @@ export default function SettingsTab() {
                   <button
                     className="btn btn-primary"
                     onClick={() => pushSync()}
-                    disabled={syncing}
+                    disabled={syncing || !drive.isSignedIn}
                     style={{ flex: 1 }}
                   >
-                    {syncing ? '⏳ Saving…' : '☁️ Save Now'}
+                    {syncing ? '⏳ Saving…' : 'Save to Drive'}
                   </button>
                   <button
                     className="btn btn-ghost"
                     onClick={() => pullSync()}
-                    disabled={syncing}
+                    disabled={syncing || !drive.isSignedIn}
                     style={{ flex: 1 }}
                   >
-                    ⬇️ Reload Cloud State
+                    Reload from Drive
                   </button>
+                </div>
+
+                <div style={{ marginTop: 8, marginBottom: 16, padding: 12, background: 'var(--bg3)', borderRadius: 8 }}>
+                  <div className="settings-label" style={{ marginBottom: 6 }}>Manual Export / Import</div>
+                  <div className="settings-desc" style={{ marginBottom: 10 }}>
+                    Use this when Drive is unavailable or you want to move your settings and memory to iPad manually without any cloud writes.
+                  </div>
+                  <textarea
+                    className="input"
+                    value={manualSyncText}
+                    onChange={e => setManualSyncText(e.target.value)}
+                    placeholder="Paste an assistant sync package here, or click Export to generate one."
+                    rows={5}
+                    style={{ width: '100%', resize: 'vertical', fontSize: 12, fontFamily: 'monospace', marginBottom: 10 }}
+                  />
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn btn-primary btn-sm" onClick={() => exportManualSync()}>
+                      Export Package
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => importManualSync()}>
+                      Import Package
+                    </button>
+                  </div>
                 </div>
 
                 {lastSynced && (
@@ -1009,14 +1032,14 @@ export default function SettingsTab() {
                 )}
 
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS keeps your local settings responsive while you edit. Use <strong>Save Now</strong> when you want to push the latest settings immediately, and the rest of the assistant state still persists in the background. If no sync code is set, each device keeps its own assistant identity. If you set the same sync code on multiple devices, they all read and write the same cloud state and Blob conversation history. Blob overflow still archives older conversations to Google Drive once usage passes 80%, as long as Drive is connected.
+                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS no longer auto-syncs settings on every tiny change. You edit locally, then use <strong>Save to Drive</strong> when you want to push settings and memory. If no sync code is set, each device keeps its own assistant identity. If you use the same sync code across devices, they read and write the same Drive-backed assistant state. Conversations now prefer Google Drive as the main archive/history source, with Blob only as a fallback.
                 </div>
 
                 {/* Google Drive — conversation history */}
                 <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
-                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>🗂️ Google Drive — Conversation History</h4>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>🗂️ Google Drive — Main Archive</h4>
                   <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 14, lineHeight: 1.6 }}>
-                    Saves every JARVIS conversation to your Google Drive (private app folder). On each new session, the last 3 conversations are loaded so JARVIS has full continuity across time and devices.
+                    JARVIS saves conversations into your Google Drive app folder and now prefers that Drive history for continuity across time and devices.
                   </p>
 
                   <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginBottom: 14 }}>
@@ -1036,7 +1059,7 @@ export default function SettingsTab() {
 
                   {settings.googleClientId && (
                     <div style={{ fontSize: 12, color: 'var(--text2)', padding: '10px 14px', background: 'var(--bg3)', borderRadius: 8, lineHeight: 1.7 }}>
-                      Client ID saved. Open the <strong style={{ color: 'var(--text3)' }}>JARVIS tab</strong> — you'll see a ☁️ button in the header. Tap it to sign in with Google and start saving conversations automatically.
+                      Client ID saved. Connect Google Drive here or open the <strong style={{ color: 'var(--text3)' }}>JARVIS tab</strong> and sign in there. Once connected, conversations and manual shared-state sync both use Drive.
                     </div>
                   )}
                 </div>

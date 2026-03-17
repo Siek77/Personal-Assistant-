@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState } from 'react'
 import Layout from './components/Layout'
 import JarvisTab from './tabs/JarvisTab'
 import ESP32Tab from './tabs/ESP32Tab'
@@ -9,102 +9,8 @@ import CalendarTab from './tabs/CalendarTab'
 import WeatherTab from './tabs/WeatherTab'
 import SettingsTab from './tabs/SettingsTab'
 import { MemoryProvider } from './context/MemoryContext'
-import { useMemory } from './context/MemoryContext'
 import { SettingsProvider } from './context/SettingsContext'
-import { useSettings } from './context/SettingsContext'
-import { applyPersistedPayload, buildPersistencePayload, getPersistenceKey } from './utils/persistence'
 import './App.css'
-
-function PersistenceManager() {
-  const { settings, updateSettings } = useSettings()
-  const { memory, mergeRemoteMemory } = useMemory()
-  const timerRef = useRef(null)
-  const isFirstRender = useRef(true)
-  const hydratedRef = useRef(false)
-  const localEditsBeforeHydrateRef = useRef(false)
-  const observedInitialStateRef = useRef(false)
-
-  const hydrateFromCloud = useCallback(async () => {
-    const clientId = getPersistenceKey()
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
-        const { data } = await res.json()
-        if (!localEditsBeforeHydrateRef.current) {
-          applyPersistedPayload(data, { updateSettings, mergeRemoteMemory })
-        }
-      } catch {
-        // Ignore bootstrap sync issues and keep local state usable.
-      } finally {
-        hydratedRef.current = true
-      }
-    })()
-  }, [mergeRemoteMemory, updateSettings])
-
-  useEffect(() => {
-    hydrateFromCloud()
-    const handleSyncTargetChange = () => {
-      hydratedRef.current = false
-      isFirstRender.current = true
-      localEditsBeforeHydrateRef.current = false
-      hydrateFromCloud()
-    }
-    window.addEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
-    return () => window.removeEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
-  }, [hydrateFromCloud])
-
-  const persistNow = useCallback(async () => {
-    const clientId = getPersistenceKey()
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(async () => {
-      try {
-        const payload = buildPersistencePayload(settings, memory)
-        const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-        const { savedAt } = await res.json()
-        if (savedAt) localStorage.setItem('jarvis_last_synced', savedAt)
-      } catch {
-        // Keep the app responsive even if persistence is temporarily unavailable.
-      }
-    }, 2000)
-  }, [settings, memory])
-
-  useEffect(() => {
-    const events = [
-      'jarvis:calendar-updated',
-      'jarvis:email-updated',
-      'jarvis:weather-updated',
-      'jarvis:ha-updated',
-      'jarvis:stocks-updated',
-    ]
-    events.forEach(eventName => window.addEventListener(eventName, persistNow))
-    return () => {
-      events.forEach(eventName => window.removeEventListener(eventName, persistNow))
-    }
-  }, [persistNow])
-
-  useEffect(() => {
-    if (!hydratedRef.current) return
-    if (isFirstRender.current) { isFirstRender.current = false; return }
-    persistNow()
-    return () => clearTimeout(timerRef.current)
-  }, [settings, memory, persistNow])
-
-  useEffect(() => {
-    if (!observedInitialStateRef.current) {
-      observedInitialStateRef.current = true
-      return
-    }
-    if (!hydratedRef.current) {
-      localEditsBeforeHydrateRef.current = true
-    }
-  }, [settings, memory])
-
-  return null
-}
 
 export const TABS = [
   { id: 'jarvis',    label: 'JARVIS',    icon: '🤖', color: '#3b82f6' },
@@ -123,7 +29,6 @@ export default function App() {
   return (
     <SettingsProvider>
       <MemoryProvider>
-        <PersistenceManager />
         <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
           {activeTab === 'jarvis'    && <JarvisTab />}
           {activeTab === 'weather'   && <WeatherTab />}

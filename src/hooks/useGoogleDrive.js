@@ -140,43 +140,62 @@ export function useGoogleDrive(clientId) {
     return folderId
   }, [driveReq])
 
+  const findFileInFolder = useCallback(async (filename, folderId) => {
+    const q = encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`)
+    const listRes = await driveReq(`${DRIVE}/files?q=${q}&fields=files(id,name,createdTime)`)
+    const { files = [] } = await listRes.json()
+    return files[0] || null
+  }, [driveReq])
+
+  const saveJsonFile = useCallback(async (filename, payload) => {
+    if (!sessionStorage.getItem('gdrive_token')) throw new Error('Not signed in to Google Drive')
+    const folderId = await getOrCreateFolder()
+    const existing = await findFileInFolder(filename, folderId)
+
+    if (existing) {
+      await driveReq(`${UPLOAD}/files/${existing.id}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+      })
+      return existing.id
+    }
+
+    const boundary = 'jarvis_boundary'
+    const meta = JSON.stringify({ name: filename, parents: [folderId] })
+    const body = [
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}`,
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${payload}`,
+      `--${boundary}--`,
+    ].join('\r\n')
+    const res = await driveReq(`${UPLOAD}/files?uploadType=multipart`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+      body,
+    })
+    const created = await res.json().catch(() => ({}))
+    return created.id || null
+  }, [driveReq, findFileInFolder, getOrCreateFolder])
+
+  const loadJsonFile = useCallback(async (filename) => {
+    if (!sessionStorage.getItem('gdrive_token')) throw new Error('Not signed in to Google Drive')
+    const folderId = await getOrCreateFolder()
+    const existing = await findFileInFolder(filename, folderId)
+    if (!existing) return null
+    const res = await driveReq(`${DRIVE}/files/${existing.id}?alt=media`)
+    return res.json().catch(() => null)
+  }, [driveReq, findFileInFolder, getOrCreateFolder])
+
   // Save (create or update) a conversation — visible in Google Drive > JARVIS Conversations
   const saveConversation = useCallback(async (convId, messages) => {
-    if (!sessionStorage.getItem('gdrive_token')) return
-    const folderId = await getOrCreateFolder()
     const filename = `jarvis_conv_${convId}.json`
     const payload = JSON.stringify({
       id: convId,
       savedAt: new Date().toISOString(),
       messages: messages.filter(m => m.id !== 'welcome'),
     })
-
-    // Check if file exists in the JARVIS folder
-    const q = encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`)
-    const listRes = await driveReq(`${DRIVE}/files?q=${q}&fields=files(id)`)
-    const { files = [] } = await listRes.json()
-
-    if (files.length > 0) {
-      await driveReq(`${UPLOAD}/files/${files[0].id}?uploadType=media`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-      })
-    } else {
-      const boundary = 'jarvis_boundary'
-      const meta = JSON.stringify({ name: filename, parents: [folderId] })
-      const body = [
-        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}`,
-        `--${boundary}\r\nContent-Type: application/json\r\n\r\n${payload}`,
-        `--${boundary}--`,
-      ].join('\r\n')
-      await driveReq(`${UPLOAD}/files?uploadType=multipart`, {
-        method: 'POST',
-        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-        body,
-      })
-    }
-  }, [driveReq, getOrCreateFolder])
+    await saveJsonFile(filename, payload)
+  }, [saveJsonFile])
 
   // Load N most recent conversations (full content) for AI context
   const loadRecentConversations = useCallback(async (limit = 3) => {
@@ -224,5 +243,11 @@ export function useGoogleDrive(clientId) {
     loadRecentConversations,
     listAllConversations,
     deleteConversation,
+    saveAssistantState: async (key, payload) => {
+      const savedAt = new Date().toISOString()
+      await saveJsonFile(`jarvis_state_${key}.json`, JSON.stringify({ ...payload, savedAt }))
+      return { savedAt }
+    },
+    loadAssistantState: async (key) => loadJsonFile(`jarvis_state_${key}.json`),
   }
 }
