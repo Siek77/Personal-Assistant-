@@ -21,6 +21,8 @@ function PersistenceManager() {
   const timerRef = useRef(null)
   const isFirstRender = useRef(true)
   const hydratedRef = useRef(false)
+  const localEditsBeforeHydrateRef = useRef(false)
+  const observedInitialStateRef = useRef(false)
 
   const hydrateFromCloud = useCallback(async () => {
     const clientId = getPersistenceKey()
@@ -28,7 +30,9 @@ function PersistenceManager() {
       try {
         const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
         const { data } = await res.json()
-        applyPersistedPayload(data, { updateSettings, mergeRemoteMemory })
+        if (!localEditsBeforeHydrateRef.current) {
+          applyPersistedPayload(data, { updateSettings, mergeRemoteMemory })
+        }
       } catch {
         // Ignore bootstrap sync issues and keep local state usable.
       } finally {
@@ -42,6 +46,7 @@ function PersistenceManager() {
     const handleSyncTargetChange = () => {
       hydratedRef.current = false
       isFirstRender.current = true
+      localEditsBeforeHydrateRef.current = false
       hydrateFromCloud()
     }
     window.addEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
@@ -87,6 +92,16 @@ function PersistenceManager() {
     persistNow()
     return () => clearTimeout(timerRef.current)
   }, [settings, memory, persistNow])
+
+  useEffect(() => {
+    if (!observedInitialStateRef.current) {
+      observedInitialStateRef.current = true
+      return
+    }
+    if (!hydratedRef.current) {
+      localEditsBeforeHydrateRef.current = true
+    }
+  }, [settings, memory])
 
   return null
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
 import {
@@ -197,7 +197,6 @@ export default function SettingsTab() {
   const [storageKey, setStorageKey] = useState(() => getPersistenceKey())
   const [lastSynced, setLastSynced] = useState(() => localStorage.getItem('jarvis_last_synced') || '')
   const [syncing, setSyncing] = useState(false)
-  const syncTimerRef = useRef(null)
 
   const save = (key, val) => {
     updateSetting(key, val)
@@ -281,13 +280,6 @@ export default function SettingsTab() {
     }
     setTimeout(() => setSyncStatus(''), 5000)
   }
-
-  // Debounced auto-push on settings changes
-  useEffect(() => {
-    if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
-    syncTimerRef.current = setTimeout(() => pushSync(), 2000)
-    return () => clearTimeout(syncTimerRef.current)
-  }, [settings])
 
   useEffect(() => {
     const handleSyncTargetChange = () => {
@@ -917,7 +909,7 @@ export default function SettingsTab() {
                 )}
 
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS auto-saves state roughly 2 seconds after changes. If no sync code is set, each device keeps its own assistant identity. If you set the same sync code on multiple devices, they all read and write the same cloud state and Blob conversation history. Blob overflow still archives older conversations to Google Drive once usage passes 80%, as long as Drive is connected.
+                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS keeps your local settings responsive while you edit. Use <strong>Save Now</strong> when you want to push the latest settings immediately, and the rest of the assistant state still persists in the background. If no sync code is set, each device keeps its own assistant identity. If you set the same sync code on multiple devices, they all read and write the same cloud state and Blob conversation history. Blob overflow still archives older conversations to Google Drive once usage passes 80%, as long as Drive is connected.
                 </div>
 
                 {/* Google Drive — conversation history */}
