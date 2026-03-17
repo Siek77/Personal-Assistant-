@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { useMemory } from '../context/MemoryContext'
-import { applyPersistedPayload, buildPersistencePayload, getOrCreateClientId } from '../utils/persistence'
+import {
+  applyPersistedPayload,
+  buildPersistencePayload,
+  generateSyncCode,
+  getOrCreateClientId,
+  getPersistenceKey,
+  getSyncCode,
+  normalizeSyncCode,
+  setSyncCode,
+} from '../utils/persistence'
 
 const SECTIONS = [
   { id: 'profile',    label: '👤 Profile',    icon: '👤' },
@@ -183,7 +192,9 @@ export default function SettingsTab() {
   const [activeSection, setActiveSection] = useState('profile')
   const [saved, setSaved] = useState(false)
   const [syncStatus, setSyncStatus] = useState('')
-  const [clientId] = useState(() => getOrCreateClientId())
+  const [deviceId] = useState(() => getOrCreateClientId())
+  const [syncCodeInput, setSyncCodeInput] = useState(() => getSyncCode())
+  const [storageKey, setStorageKey] = useState(() => getPersistenceKey())
   const [lastSynced, setLastSynced] = useState(() => localStorage.getItem('jarvis_last_synced') || '')
   const [syncing, setSyncing] = useState(false)
   const syncTimerRef = useRef(null)
@@ -197,6 +208,7 @@ export default function SettingsTab() {
   const pushSync = async () => {
     setSyncing(true)
     try {
+      const clientId = getPersistenceKey()
       const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -217,6 +229,7 @@ export default function SettingsTab() {
   const pullSync = async () => {
     setSyncing(true)
     try {
+      const clientId = getPersistenceKey()
       const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
       const { data } = await res.json()
       if (!data?.settings && !data?.memory) { setSyncStatus('✗ No cloud data found yet for this assistant.'); return }
@@ -233,12 +246,58 @@ export default function SettingsTab() {
     }
   }
 
+  const applySyncCode = async () => {
+    const normalized = setSyncCode(syncCodeInput)
+    setSyncCodeInput(normalized)
+    setStorageKey(getPersistenceKey())
+    setSyncStatus(
+      normalized
+        ? '✓ Shared sync code applied. This device now points at the shared assistant state.'
+        : '✓ Shared sync code cleared. This device is back on its own local assistant identity.'
+    )
+    await pullSync()
+  }
+
+  const generateAndApplySyncCode = async () => {
+    const nextCode = generateSyncCode()
+    setSyncCodeInput(nextCode)
+    const normalized = setSyncCode(nextCode)
+    setStorageKey(getPersistenceKey())
+    setSyncStatus(`✓ New sync code created: ${normalized}`)
+    await pullSync()
+  }
+
+  const copySyncCode = async () => {
+    const value = normalizeSyncCode(syncCodeInput)
+    if (!value) {
+      setSyncStatus('✗ Add or generate a sync code first.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(value)
+      setSyncStatus('✓ Sync code copied. Paste it into your other device.')
+    } catch {
+      setSyncStatus(`Copy this sync code manually: ${value}`)
+    }
+    setTimeout(() => setSyncStatus(''), 5000)
+  }
+
   // Debounced auto-push on settings changes
   useEffect(() => {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
     syncTimerRef.current = setTimeout(() => pushSync(), 2000)
     return () => clearTimeout(syncTimerRef.current)
   }, [settings])
+
+  useEffect(() => {
+    const handleSyncTargetChange = () => {
+      setSyncCodeInput(getSyncCode())
+      setStorageKey(getPersistenceKey())
+      setLastSynced(localStorage.getItem('jarvis_last_synced') || '')
+    }
+    window.addEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
+    return () => window.removeEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
+  }, [])
 
   return (
     <div className="settings-shell">
@@ -785,25 +844,40 @@ export default function SettingsTab() {
             {/* Sync */}
             {activeSection === 'sync' && (
               <div className="settings-section">
-                <h3>Cloud Persistence</h3>
+                <h3>Cloud Sync</h3>
                 <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
-                  Settings, memory, conversation context, and local assistant state are automatically saved to Vercel Blob through the app API so JARVIS stays persistent between sessions.
+                  Settings, memory, calendar/email context, and conversation history are saved to Vercel Blob. Use a shared sync code if you want multiple devices to open the exact same assistant.
                 </p>
 
                 <div style={{ marginBottom: 20 }}>
-                  <div className="settings-label" style={{ marginBottom: 6 }}>Assistant Client ID</div>
+                  <div className="settings-label" style={{ marginBottom: 6 }}>Shared Sync Code</div>
                   <div className="settings-desc" style={{ marginBottom: 10 }}>
-                    This ID is generated automatically for this assistant instance and is used as the storage key for your persisted state.
+                    Generate one here or paste the same code on another device. Devices using the same code will share the same memory, settings, and conversations.
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <input
                       className="input"
                       type="text"
-                      value={clientId}
-                      readOnly
-                      style={{ fontSize: 13, flex: 1 }}
+                      value={syncCodeInput}
+                      onChange={e => setSyncCodeInput(normalizeSyncCode(e.target.value))}
+                      placeholder="jarvis-your-shared-code"
+                      style={{ fontSize: 13, flex: '1 1 260px' }}
                     />
+                    <button className="btn btn-primary btn-sm" onClick={() => applySyncCode()} disabled={syncing}>
+                      Use Code
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => generateAndApplySyncCode()} disabled={syncing}>
+                      Generate
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => copySyncCode()}>
+                      Copy
+                    </button>
                   </div>
+                </div>
+
+                <div style={{ marginBottom: 18, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+                  <div><strong style={{ color: 'var(--text3)' }}>Active storage key:</strong> <code>{storageKey}</code></div>
+                  <div style={{ marginTop: 6 }}><strong style={{ color: 'var(--text3)' }}>This device ID:</strong> <code>{deviceId}</code></div>
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -843,7 +917,7 @@ export default function SettingsTab() {
                 )}
 
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS auto-saves state roughly 2 seconds after changes. Active chat history lives in Vercel Blob, and once Blob usage reaches 80%, older conversations are automatically archived to Google Drive until usage drops back down, as long as Drive is connected.
+                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS auto-saves state roughly 2 seconds after changes. If no sync code is set, each device keeps its own assistant identity. If you set the same sync code on multiple devices, they all read and write the same cloud state and Blob conversation history. Blob overflow still archives older conversations to Google Drive once usage passes 80%, as long as Drive is connected.
                 </div>
 
                 {/* Google Drive — conversation history */}

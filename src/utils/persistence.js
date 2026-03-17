@@ -1,4 +1,5 @@
 export const CLIENT_ID_STORAGE_KEY = 'jarvis_client_id'
+export const SYNC_CODE_STORAGE_KEY = 'jarvis_sync_code'
 export const LAST_SYNCED_STORAGE_KEY = 'jarvis_last_synced'
 
 function readJson(key, fallback) {
@@ -17,6 +18,40 @@ export function getOrCreateClientId() {
     localStorage.setItem(CLIENT_ID_STORAGE_KEY, clientId)
   }
   return clientId
+}
+
+export function normalizeSyncCode(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+}
+
+export function getSyncCode() {
+  return normalizeSyncCode(localStorage.getItem(SYNC_CODE_STORAGE_KEY) || '')
+}
+
+export function setSyncCode(value) {
+  const normalized = normalizeSyncCode(value)
+  if (normalized) {
+    localStorage.setItem(SYNC_CODE_STORAGE_KEY, normalized)
+  } else {
+    localStorage.removeItem(SYNC_CODE_STORAGE_KEY)
+  }
+  window.dispatchEvent(new CustomEvent('jarvis:sync-code-changed', { detail: { syncCode: normalized } }))
+  return normalized
+}
+
+export function generateSyncCode() {
+  const random = crypto.randomUUID().replace(/-/g, '').slice(0, 18)
+  return normalizeSyncCode(`jarvis-${random.slice(0, 6)}-${random.slice(6, 12)}-${random.slice(12, 18)}`)
+}
+
+export function getPersistenceKey() {
+  return getSyncCode() || getOrCreateClientId()
 }
 
 export function buildPersistencePayload(settings, memory) {

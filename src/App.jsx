@@ -12,7 +12,7 @@ import { MemoryProvider } from './context/MemoryContext'
 import { useMemory } from './context/MemoryContext'
 import { SettingsProvider } from './context/SettingsContext'
 import { useSettings } from './context/SettingsContext'
-import { applyPersistedPayload, buildPersistencePayload, getOrCreateClientId } from './utils/persistence'
+import { applyPersistedPayload, buildPersistencePayload, getPersistenceKey } from './utils/persistence'
 import './App.css'
 
 function PersistenceManager() {
@@ -22,8 +22,8 @@ function PersistenceManager() {
   const isFirstRender = useRef(true)
   const hydratedRef = useRef(false)
 
-  useEffect(() => {
-    const clientId = getOrCreateClientId()
+  const hydrateFromCloud = useCallback(async () => {
+    const clientId = getPersistenceKey()
     ;(async () => {
       try {
         const res = await fetch(`/api/state?clientId=${encodeURIComponent(clientId)}`)
@@ -35,10 +35,21 @@ function PersistenceManager() {
         hydratedRef.current = true
       }
     })()
-  }, [])
+  }, [mergeRemoteMemory, updateSettings])
+
+  useEffect(() => {
+    hydrateFromCloud()
+    const handleSyncTargetChange = () => {
+      hydratedRef.current = false
+      isFirstRender.current = true
+      hydrateFromCloud()
+    }
+    window.addEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
+    return () => window.removeEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
+  }, [hydrateFromCloud])
 
   const persistNow = useCallback(async () => {
-    const clientId = getOrCreateClientId()
+    const clientId = getPersistenceKey()
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(async () => {
       try {

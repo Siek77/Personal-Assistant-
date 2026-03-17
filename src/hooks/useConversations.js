@@ -2,7 +2,7 @@
 // Uses the app's generated client ID so persistence works without manual sync setup.
 
 import { useState, useCallback, useEffect } from 'react'
-import { getOrCreateClientId } from '../utils/persistence'
+import { getPersistenceKey } from '../utils/persistence'
 
 async function parseApiJson(response) {
   const text = await response.text()
@@ -26,11 +26,14 @@ export function useConversations() {
   const [isAvailable, setIsAvailable] = useState(false)
 
   useEffect(() => {
-    setIsAvailable(!!getOrCreateClientId())
+    setIsAvailable(!!getPersistenceKey())
+    const handleSyncTargetChange = () => setIsAvailable(!!getPersistenceKey())
+    window.addEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
+    return () => window.removeEventListener('jarvis:sync-code-changed', handleSyncTargetChange)
   }, [])
 
   async function getKey() {
-    return getOrCreateClientId()
+    return getPersistenceKey()
   }
 
   // Save / overwrite a conversation in blob
@@ -67,7 +70,7 @@ export function useConversations() {
     const recent = convs.slice(0, limit)
     const results = await Promise.all(
       recent.map(c =>
-        fetch(`/api/conversations?key=${encodeURIComponent(getOrCreateClientId())}&id=${encodeURIComponent(c.id)}`)
+        fetch(`/api/conversations?key=${encodeURIComponent(getPersistenceKey())}&id=${encodeURIComponent(c.id)}`)
           .then(parseApiJson)
           .then(data => data.conversation || null)
           .catch(() => null)

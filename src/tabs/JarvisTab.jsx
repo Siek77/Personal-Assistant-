@@ -5,7 +5,7 @@ import { useGoogleDrive } from '../hooks/useGoogleDrive'
 import { useConversations } from '../hooks/useConversations'
 import { useGmail } from '../hooks/useGmail'
 import { useMicrosoftMail } from '../hooks/useMicrosoftMail'
-import { getOrCreateClientId } from '../utils/persistence'
+import { getPersistenceKey } from '../utils/persistence'
 
 const OPENAI_PROVIDER = {
   name: 'OpenAI',
@@ -513,7 +513,7 @@ export default function JarvisTab() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clientId: getOrCreateClientId(),
+          clientId: getPersistenceKey(),
           messages: apiMessages,
           settings,
           memory: JSON.parse(localStorage.getItem('jarvis_memory') || 'null') || memory,
