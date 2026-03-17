@@ -1,5 +1,5 @@
 import { list, put, del } from '@vercel/blob'
-import { fetchBlobJson } from './blob-utils.js'
+import { fetchBlobJson } from '../src/lib/blobUtils.js'
 
 const MAX_PAYLOAD_BYTES = 512 * 1024
 

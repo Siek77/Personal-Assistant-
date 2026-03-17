@@ -18,7 +18,7 @@
 //   USER_FACTS     — comma-separated facts (only used if SYNC_KEY not set)
 
 import { list } from '@vercel/blob'
-import { fetchBlobJson } from './blob-utils.js'
+import { fetchBlobJson } from '../src/lib/blobUtils.js'
 
 // Fetch the N most recent blob conversations for prior-session context
 async function fetchRecentBlobConversations(syncKey, limit = 3) {
