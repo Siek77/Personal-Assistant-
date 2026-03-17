@@ -120,6 +120,63 @@ function UptimeUrlsEditor({ value, onChange }) {
   )
 }
 
+function CalendarFeedsEditor({ value, onChange }) {
+  let feeds = []
+  try { feeds = JSON.parse(value || '[]') } catch {}
+  const [list, setList] = useState(feeds)
+  const [newLabel, setNewLabel] = useState('')
+  const [newUrl, setNewUrl] = useState('')
+
+  const commit = (next) => {
+    setList(next)
+    onChange(JSON.stringify(next))
+  }
+
+  const add = () => {
+    const url = newUrl.trim()
+    if (!url) return
+    commit([...list, { label: newLabel.trim() || 'Work Calendar', url }])
+    setNewLabel('')
+    setNewUrl('')
+  }
+
+  const remove = (i) => commit(list.filter((_, j) => j !== i))
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+        {list.map((item, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 8 }}>
+            <span style={{ fontSize: 12, flex: 1, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <strong>{item.label}</strong> <span style={{ color: 'var(--text2)', fontSize: 11 }}>{item.url}</span>
+            </span>
+            <button className="btn btn-ghost btn-sm" onClick={() => remove(i)} style={{ color: '#ef4444', fontSize: 11 }}>✕</button>
+          </div>
+        ))}
+        {list.length === 0 && <div style={{ fontSize: 12, color: 'var(--text2)' }}>No work calendar feeds added yet.</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          placeholder="Label (e.g. Work, Team, PTO)"
+          value={newLabel}
+          onChange={e => setNewLabel(e.target.value)}
+          style={{ fontSize: 13, flex: '1 1 120px' }}
+        />
+        <input
+          className="input"
+          placeholder="https://outlook.office365.com/owa/calendar/....ics"
+          value={newUrl}
+          onChange={e => setNewUrl(e.target.value)}
+          style={{ fontSize: 13, flex: '2 1 260px' }}
+          onKeyDown={e => e.key === 'Enter' && add()}
+        />
+        <button className="btn btn-primary btn-sm" onClick={add} style={{ flexShrink: 0 }}>Add</button>
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsTab() {
   const { settings, updateSetting, updateSettings } = useSettings()
   const { memory, clearMemory, mergeRemoteMemory } = useMemory()
@@ -392,6 +449,22 @@ export default function SettingsTab() {
                   />
                   <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
                     Credentials are sent to the /api/apple-calendar proxy only when you load calendars — never stored server-side.
+                  </div>
+                </div>
+
+                <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
+
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#2563eb' }}>Work Calendar (Outlook ICS)</h4>
+                  <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.6 }}>
+                    Add one or more private Outlook ICS subscription links for work calendars. In the Calendar tab, you can toggle which feeds are active, and JARVIS will only see the active ones.
+                  </p>
+                  <CalendarFeedsEditor
+                    value={settings.workCalendarFeeds || '[]'}
+                    onChange={v => save('workCalendarFeeds', v)}
+                  />
+                  <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8, fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+                    Treat ICS links like secrets. Anyone with the URL can read that published calendar.
                   </div>
                 </div>
               </div>

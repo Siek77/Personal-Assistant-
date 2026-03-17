@@ -36,6 +36,7 @@ const DEFAULTS = {
   // Apple Calendar (CalDAV)
   calDavEmail: '',
   calDavPassword: '',
+  workCalendarFeeds: '[]',
   // Uptime monitoring — JSON string of [{label, url}]
   uptimeUrls: '[]',
   // TTS

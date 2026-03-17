@@ -69,20 +69,20 @@ export function useGmail(clientId) {
   }, [token])
 
   // Returns recent emails with configurable depth so JARVIS can reason over more history.
-  const fetchEmails = useCallback(async ({ maxResults = 50, daysBack = 30, unreadOnly = false } = {}) => {
+  const fetchEmails = useCallback(async ({ maxResults = 100, daysBack = 30, unreadOnly = false } = {}) => {
     const queryParts = []
     if (unreadOnly) queryParts.push('is:unread')
     if (daysBack) queryParts.push(`newer_than:${daysBack}d`)
     const query = queryParts.join(' ') || 'in:inbox'
 
     const listData = await apiFetch(
-      `https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${Math.min(maxResults, 50)}`
+      `https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${Math.min(maxResults, 100)}`
     )
     const msgList = listData.messages || []
     if (!msgList.length) return []
 
     const emails = await Promise.all(
-      msgList.slice(0, Math.min(maxResults, 50)).map(async ({ id }) => {
+      msgList.slice(0, Math.min(maxResults, 100)).map(async ({ id }) => {
         try {
           const msg = await apiFetch(
             `https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`

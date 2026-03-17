@@ -45,6 +45,7 @@ function getDays(n = 14) {
 }
 
 function EventRow({ event, color = '#3b82f6', source }) {
+  const sourceIcon = source === 'google' ? '🇬' : source === 'apple' ? '🍎' : '🏢'
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 10,
@@ -69,7 +70,7 @@ function EventRow({ event, color = '#3b82f6', source }) {
         )}
       </div>
       <div style={{ fontSize: 10, color: 'var(--text2)', flexShrink: 0 }}>
-        {source === 'google' ? '🇬' : '🍎'}
+        {sourceIcon}
       </div>
     </div>
   )
@@ -101,7 +102,7 @@ function GoogleCalSection({ clientId, selectedDay }) {
       )
       const sorted = allEvents.flat().sort((a, b) => new Date(a.start) - new Date(b.start))
       setEvents(sorted)
-      if (sorted.length) persistCalEvents(sorted, 'google')
+      persistCalEvents(sorted, 'google')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -254,7 +255,7 @@ function AppleCalSection({ email, password, selectedDay }) {
       )
       const sorted = allEvents.flat().sort((a, b) => new Date(a.start) - new Date(b.start))
       setEvents(sorted)
-      if (sorted.length) persistCalEvents(sorted, 'apple')
+      persistCalEvents(sorted, 'apple')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -321,11 +322,111 @@ function AppleCalSection({ email, password, selectedDay }) {
   )
 }
 
+function WorkCalSection({ feedsJson, selectedDay }) {
+  const feeds = (() => {
+    try { return JSON.parse(feedsJson || '[]') } catch { return [] }
+  })()
+  const [events, setEvents] = useState([])
+  const [activeUrls, setActiveUrls] = useState(() => feeds.map(feed => feed.url))
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    setActiveUrls(feeds.map(feed => feed.url))
+  }, [feedsJson])
+
+  const fetchEvents = useCallback(async () => {
+    if (!activeUrls.length) {
+      setEvents([])
+      persistCalEvents([], 'work')
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const now = new Date()
+      const end = new Date(now.getTime() + 14 * 86400000)
+      const allEvents = await Promise.all(
+        activeUrls.map(url =>
+          fetch('/api/apple-calendar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'ics', icsUrl: url, startDate: now.toISOString(), endDate: end.toISOString() }),
+            signal: AbortSignal.timeout(15000),
+          }).then(r => r.json()).then(d => d.events || []).catch(() => [])
+        )
+      )
+      const sorted = allEvents.flat().sort((a, b) => new Date(a.start) - new Date(b.start))
+      setEvents(sorted)
+      persistCalEvents(sorted, 'work')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [activeUrls])
+
+  useEffect(() => { if (feeds.length) fetchEvents() }, [fetchEvents, feeds.length])
+
+  const toggleFeed = (url) => {
+    setActiveUrls(prev => prev.includes(url) ? prev.filter(x => x !== url) : [...prev, url])
+  }
+
+  if (!feeds.length) {
+    return (
+      <div style={{ padding: '16px', background: 'var(--bg3)', borderRadius: 10, fontSize: 12, color: 'var(--text2)', lineHeight: 1.7 }}>
+        Add one or more Outlook ICS links in Settings → Calendar to connect your work calendars without OAuth.
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 12, color: 'var(--green)' }}>● {feeds.length} work feed{feeds.length === 1 ? '' : 's'}</span>
+        <button className="btn btn-ghost btn-sm" onClick={fetchEvents} disabled={loading} style={{ fontSize: 11 }}>
+          {loading ? '⏳' : '⟳'}
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        {feeds.map(feed => (
+          <button
+            key={feed.url}
+            onClick={() => toggleFeed(feed.url)}
+            style={{
+              fontSize: 11, padding: '3px 10px', borderRadius: 12,
+              border: '1px solid #2563eb',
+              background: activeUrls.includes(feed.url) ? '#2563eb22' : 'transparent',
+              color: activeUrls.includes(feed.url) ? '#93c5fd' : 'var(--text2)',
+              cursor: 'pointer',
+            }}
+          >
+            {feed.label || 'Work Calendar'}
+          </button>
+        ))}
+      </div>
+
+      {error && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>⚠️ {error}</div>}
+
+      {events.length === 0 && !loading && (
+        <div style={{ fontSize: 12, color: 'var(--text2)', padding: '12px 0' }}>No work events in the next 14 days.</div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {events.filter(e => sameDay(e.start, selectedDay)).map((e, i) => (
+          <EventRow key={e.uid || i} event={e} color="#2563eb" source="work" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Calendar Tab ─────────────────────────────────────────────────────────
 
 export default function CalendarTab() {
   const { settings } = useSettings()
-  const [view, setView] = useState('google') // 'google' | 'apple' | 'merged'
+  const [view, setView] = useState('google')
   const [selectedDayIdx, setSelectedDayIdx] = useState(0)
   const days = getDays(14)
 
@@ -338,6 +439,7 @@ export default function CalendarTab() {
           {[
             { id: 'google', label: '🇬 Google' },
             { id: 'apple', label: '🍎 Apple' },
+            { id: 'work', label: '🏢 Work' },
           ].map(v => (
             <button
               key={v.id}
@@ -384,10 +486,16 @@ export default function CalendarTab() {
             <AppleCalSection email={settings.calDavEmail} password={settings.calDavPassword} selectedDay={days[selectedDayIdx]} />
           </>
         )}
+        {view === 'work' && (
+          <>
+            <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: '#2563eb' }}>Work Calendar (Outlook ICS)</h3>
+            <WorkCalSection feedsJson={settings.workCalendarFeeds} selectedDay={days[selectedDayIdx]} />
+          </>
+        )}
       </div>
 
       <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text2)', lineHeight: 1.7 }}>
-        Events shown for the next 14 days. Apple Calendar uses iCloud CalDAV (read-only). Credentials are sent only to our proxy server and never stored.
+        Events shown for the next 14 days. Only calendars you enable in each section are persisted into JARVIS context for AI access.
       </div>
     </div>
   )

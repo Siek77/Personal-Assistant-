@@ -367,7 +367,7 @@ export default function JarvisTab() {
     setInput(prompt)
   }
 
-  const fetchEmailProviders = useCallback(async ({ maxResults = 50, daysBack = 30 } = {}) => {
+  const fetchEmailProviders = useCallback(async ({ maxResults = 100, daysBack = 30 } = {}) => {
     const fetchOptions = { maxResults, daysBack, unreadOnly: false }
     const providers = []
 
@@ -444,7 +444,7 @@ export default function JarvisTab() {
     setEmailLoading(true)
     try {
       const selectedRange = EMAIL_RANGES.find(range => range.id === emailRange) || EMAIL_RANGES[1]
-      const fetched = await fetchEmailProviders({ maxResults: 50, daysBack: selectedRange.daysBack })
+      const fetched = await fetchEmailProviders({ maxResults: 100, daysBack: selectedRange.daysBack })
       setEmails(fetched)
       localStorage.setItem('jarvis_email_summary', JSON.stringify(fetched))
       window.dispatchEvent(new CustomEvent('jarvis:email-updated'))
@@ -463,7 +463,7 @@ export default function JarvisTab() {
     setEmailSearchStatus('')
     try {
       const selectedRange = EMAIL_RANGES.find(range => range.id === emailRange) || EMAIL_RANGES[1]
-      const fetched = await fetchEmailProviders({ maxResults: 50, daysBack: selectedRange.daysBack })
+      const fetched = await fetchEmailProviders({ maxResults: 100, daysBack: selectedRange.daysBack })
       const matches = fetched.filter(email => matchesEmailQuery(email, query)).slice(0, 15)
 
       if (!matches.length) {
@@ -921,7 +921,8 @@ export default function JarvisTab() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 {(gmail.isSignedIn || outlook.isSignedIn || settings.outlookEmail || settings.yahooEmail) && (
                   <>
-                    <span className="badge badge-blue">{emails.filter(e => e.unread).length} unread</span>
+                    <span className="badge badge-blue">{emails.length} synced</span>
+                    <span style={{ fontSize: 10, color: 'var(--text2)' }}>{emails.filter(e => e.unread).length} unread</span>
                     <select
                       className="input"
                       value={emailRange}
@@ -1036,7 +1037,7 @@ export default function JarvisTab() {
                 ))
             )}
             <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 8 }}>
-              Syncs up to 50 emails per account for the selected window. Pick a longer range and refresh if you want JARVIS to dig further back.
+              Syncs up to 100 emails per account for the selected window, including both read and unread mail. Pick a longer range and refresh if you want JARVIS to dig further back.
             </div>
           </div>
         )}

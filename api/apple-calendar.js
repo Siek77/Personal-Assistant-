@@ -8,18 +8,20 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { action, email, password, calendarUrl, startDate, endDate } = req.body || {}
-  if (!email || !password) return res.status(400).json({ error: 'email and password required' })
-
-  const auth = 'Basic ' + Buffer.from(`${email}:${password}`).toString('base64')
+  const { action, email, password, calendarUrl, startDate, endDate, icsUrl } = req.body || {}
+  const auth = email && password
+    ? 'Basic ' + Buffer.from(`${email}:${password}`).toString('base64')
+    : null
 
   try {
     if (action === 'discover') {
+      if (!email || !password) return res.status(400).json({ error: 'email and password required' })
       const calendars = await discoverCalendars(email, auth)
       return res.status(200).json({ calendars })
     }
 
     if (action === 'events') {
+      if (!email || !password) return res.status(400).json({ error: 'email and password required' })
       if (!calendarUrl || !startDate || !endDate) {
         return res.status(400).json({ error: 'calendarUrl, startDate, endDate required' })
       }
@@ -27,7 +29,15 @@ export default async function handler(req, res) {
       return res.status(200).json({ events })
     }
 
-    return res.status(400).json({ error: 'action must be discover or events' })
+    if (action === 'ics') {
+      if (!icsUrl || !startDate || !endDate) {
+        return res.status(400).json({ error: 'icsUrl, startDate, endDate required' })
+      }
+      const events = await fetchIcsEvents(icsUrl, startDate, endDate)
+      return res.status(200).json({ events })
+    }
+
+    return res.status(400).json({ error: 'action must be discover, events, or ics' })
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
@@ -118,6 +128,19 @@ async function fetchEvents(calendarUrl, auth, startDate, endDate) {
   })
   const text = await r.text()
   return parseEvents(text)
+}
+
+async function fetchIcsEvents(icsUrl, startDate, endDate) {
+  const r = await fetch(icsUrl)
+  if (!r.ok) throw new Error(`ICS fetch failed with ${r.status}`)
+  const text = await r.text()
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  return parseICAL(text).filter(event => {
+    if (!event.start) return false
+    const eventStart = new Date(event.start)
+    return eventStart >= start && eventStart <= end
+  })
 }
 
 // ── XML/iCal helpers ────────────────────────────────────────────────────────
