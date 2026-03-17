@@ -19,6 +19,9 @@ const OPENAI_PROVIDER = {
   ],
 }
 
+const BLOB_ARCHIVE_THRESHOLD = 0.8
+const BLOB_ARCHIVE_TARGET = 0.6
+
 function stripMarkdown(text) {
   return text
     .replace(/```[\s\S]*?```/g, match => match.replace(/```\w*\n?/g, '').trim())
@@ -87,6 +90,7 @@ export default function JarvisTab() {
   const [blobConvsExpanded, setBlobConvsExpanded] = useState(false)
   const [blobConvs, setBlobConvs] = useState([])
   const [archiving, setArchiving] = useState(false)
+  const [autoArchiving, setAutoArchiving] = useState(false)
   const [editingFactId, setEditingFactId] = useState(null)
   const [editingFactText, setEditingFactText] = useState('')
   const [driveConvs, setDriveConvs] = useState([])
@@ -200,6 +204,61 @@ export default function JarvisTab() {
       setArchiving(false)
     }
   }, [drive.isSignedIn, drive.saveConversation, conversations])
+
+  const archiveOverflowToDrive = useCallback(async () => {
+    if (!drive.isSignedIn || !conversations.isAvailable || autoArchiving) return
+
+    const storage = conversations.storageInfo
+    if (!storage?.limitBytes || !storage?.totalBytes) return
+
+    const usageRatio = storage.totalBytes / storage.limitBytes
+    if (usageRatio < BLOB_ARCHIVE_THRESHOLD) return
+
+    setAutoArchiving(true)
+    setSaveStatus('Storage cap reached. Archiving older conversations…')
+
+    try {
+      const convList = await conversations.listConversations()
+      if (convList.length <= 1) return
+
+      const sortedOldestFirst = [...convList].sort((a, b) => new Date(a.uploadedAt) - new Date(b.uploadedAt))
+      const newestId = convList[0]?.id
+      let bytesToFree = storage.totalBytes - storage.limitBytes * BLOB_ARCHIVE_TARGET
+      const idsToArchive = []
+
+      for (const conv of sortedOldestFirst) {
+        if (conv.id === newestId) continue
+        idsToArchive.push(conv.id)
+        bytesToFree -= conv.size || 0
+        if (bytesToFree <= 0) break
+      }
+
+      if (!idsToArchive.length) return
+
+      for (const id of idsToArchive) {
+        const data = await conversations.getConversation(id).catch(() => null)
+        if (data?.messages) {
+          await drive.saveConversation(id, data.messages)
+        }
+      }
+
+      await conversations.deleteConversations(idsToArchive)
+      const refreshed = await conversations.listConversations()
+      setBlobConvs(refreshed)
+      setSaveStatus(`✓ Archived ${idsToArchive.length} older conversation${idsToArchive.length === 1 ? '' : 's'} to Drive`)
+      setTimeout(() => setSaveStatus(''), 5000)
+    } catch (e) {
+      setSaveStatus('⚠️ Auto-archive failed: ' + e.message)
+      setTimeout(() => setSaveStatus(''), 7000)
+    } finally {
+      setAutoArchiving(false)
+    }
+  }, [autoArchiving, conversations, drive.isSignedIn, drive.saveConversation])
+
+  useEffect(() => {
+    if (!drive.isSignedIn || !conversations.isAvailable || autoArchiving || archiving) return
+    archiveOverflowToDrive()
+  }, [archiveOverflowToDrive, archiving, autoArchiving, conversations.isAvailable, conversations.storageInfo, drive.isSignedIn])
 
   // ── TTS ──
   const speak = useCallback((text) => {
@@ -652,11 +711,11 @@ export default function JarvisTab() {
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={archiveToDrive}
-                disabled={archiving}
+                disabled={archiving || autoArchiving}
                 style={{ fontSize: 11, width: '100%', marginBottom: 8 }}
                 title="Move all blob conversations to Google Drive and free up space"
               >
-                {archiving ? '⏳ Archiving…' : `📦 Archive all ${blobConvs.length} to Drive`}
+                {archiving || autoArchiving ? '⏳ Archiving…' : `📦 Archive all ${blobConvs.length} to Drive`}
               </button>
             )}
 

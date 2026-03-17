@@ -175,7 +175,7 @@ export default function SettingsTab() {
     }
   }
 
-  // Debounced auto-push on settings change
+  // Debounced auto-push on settings changes
   useEffect(() => {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
     syncTimerRef.current = setTimeout(() => pushSync(), 2000)
@@ -694,7 +694,7 @@ export default function SettingsTab() {
                 )}
 
                 <div style={{ marginTop: 20, padding: 12, background: 'var(--bg3)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS auto-saves state roughly 2 seconds after changes. The same persisted state is also used by the new server-side OpenAI chat route, so memory survives stateless API calls.
+                  <strong style={{ color: 'var(--text3)' }}>How it works:</strong> JARVIS auto-saves state roughly 2 seconds after changes. Active chat history lives in Vercel Blob, and once Blob usage reaches 80%, older conversations are automatically archived to Google Drive until usage drops back down, as long as Drive is connected.
                 </div>
 
                 {/* Google Drive — conversation history */}
